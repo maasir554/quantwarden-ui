@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -51,7 +54,49 @@ const topMetrics = [
   { label: "Certificate Issues", value: "7",  warn: true },
 ];
 
-export default function Cbom() {
+type CbomProps = {
+  isExplorerOpen?: boolean;
+  onCloseExplorer?: () => void;
+  closeExplorerHref?: string;
+};
+
+export default function Cbom({ isExplorerOpen = false, onCloseExplorer, closeExplorerHref }: CbomProps) {
+  const explorerOpen = isExplorerOpen;
+
+  if (explorerOpen) {
+    return (
+      <div className="space-y-4">
+        <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 min-h-140">
+          <div className="mb-4 flex justify-start">
+            {closeExplorerHref ? (
+              <Link
+                href={closeExplorerHref}
+                aria-label="Back"
+                className="rounded-lg border border-white/15 bg-white/5 p-2 text-slate-200 transition hover:bg-white/10"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span className="sr-only">Back</span>
+              </Link>
+            ) : (
+              <button
+                onClick={onCloseExplorer}
+                aria-label="Back"
+                className="rounded-lg border border-white/15 bg-white/5 p-2 text-slate-200 transition hover:bg-white/10"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span className="sr-only">Back</span>
+              </button>
+            )}
+          </div>
+
+          <div className="min-h-110 overflow-x-auto rounded-xl border border-dashed border-white/10" aria-label="CBOM table explorer">
+            <table className="min-w-full text-left text-xs" />
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* Top metrics */}
@@ -110,7 +155,7 @@ export default function Cbom() {
           <div className="h-48">
             <ResponsiveContainer>
               <PieChart>
-                <Pie data={topCaData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={72} strokeWidth={4} stroke="rgba(2,6,23,0.75)">
+                <Pie data={topCaData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={72} strokeWidth={2} stroke="rgba(2,6,23,0.75)">
                   {topCaData.map((e) => <Cell key={e.name} fill={e.color} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--overview-tooltip-bg)", border: "1px solid var(--overview-tooltip-border)", borderRadius: "10px", color: "var(--overview-tooltip-text)" }} />
@@ -147,7 +192,7 @@ export default function Cbom() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {caTable.map((row, i) => (
-                  <tr key={i} className={`hover:bg-white/[0.03] ${i === 0 ? "bg-cyan-500/5" : ""}`}>
+                  <tr key={i} className={`hover:bg-white/3 ${i === 0 ? "bg-cyan-500/5" : ""}`}>
                     <td className="px-4 py-3 text-slate-100 font-medium whitespace-nowrap">{row.app}</td>
                     <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{row.keyLen}</td>
                     <td className={`px-4 py-3 font-mono whitespace-nowrap rounded-sm ${row.risk ? "text-rose-200 bg-rose-500/10" : "text-slate-300"}`} style={{ fontSize: "10px" }}>
@@ -167,7 +212,7 @@ export default function Cbom() {
           <div className="h-44">
             <ResponsiveContainer>
               <PieChart>
-                <Pie data={encryptionProtocols} dataKey="value" nameKey="name" innerRadius={40} outerRadius={66} strokeWidth={4} stroke="rgba(2,6,23,0.75)">
+                <Pie data={encryptionProtocols} dataKey="value" nameKey="name" innerRadius={40} outerRadius={66} strokeWidth={2} stroke="rgba(2,6,23,0.75)">
                   {encryptionProtocols.map((e) => <Cell key={e.name} fill={e.color} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--overview-tooltip-bg)", border: "1px solid var(--overview-tooltip-border)", borderRadius: "10px", color: "var(--overview-tooltip-text)" }} />

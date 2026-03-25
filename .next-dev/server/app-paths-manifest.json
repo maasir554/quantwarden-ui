@@ -1,0 +1,7 @@
+{
+  "/cbom/page": "app/cbom/page.js",
+  "/cbom/explorer/protocols/page": "app/cbom/explorer/protocols/page.js",
+  "/cbom/explorer/page": "app/cbom/explorer/page.js",
+  "/cbom/explorer/keys/page": "app/cbom/explorer/keys/page.js",
+  "/cbom/explorer/certificates/page": "app/cbom/explorer/certificates/page.js"
+}

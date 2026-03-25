@@ -262,6 +262,62 @@
   background-color: rgba(123, 225, 167, 0.16) !important;
 }
 
+.theme-light .cbom-explorer-btn {
+  border-color: rgba(139, 0, 0, 0.45) !important;
+  background-color: #8b0000 !important;
+  color: #ffffff !important;
+}
+
+.theme-light .cbom-explorer-btn:hover {
+  background-color: #730000 !important;
+}
+
+.theme-light .cbom-explorer-tab-active {
+  border-color: rgba(139, 0, 0, 0.45) !important;
+  background-color: #8b0000 !important;
+  color: #ffffff !important;
+}
+
+.theme-light .cbom-explorer-tab-inactive {
+  border-color: rgba(139, 0, 0, 0.2) !important;
+  background-color: rgba(139, 0, 0, 0.08) !important;
+  color: #6d1f1f !important;
+}
+
+.theme-light .cbom-explorer-tab-inactive:hover {
+  background-color: rgba(139, 0, 0, 0.16) !important;
+}
+
+.cbom-explorer-table-grid th,
+.cbom-explorer-table-grid td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cbom-explorer-table-grid tr > :first-child {
+  border-left: 0;
+}
+
+.cbom-explorer-table-grid tr > :last-child {
+  border-right: 0;
+}
+
+.cbom-explorer-table-grid thead tr:first-child > th {
+  border-top: 0;
+}
+
+.cbom-explorer-table-grid tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+.theme-light .cbom-explorer-table th,
+.theme-light .cbom-explorer-table td {
+  border-color: rgba(137, 92, 26, 0.24) !important;
+}
+
+.theme-light .cbom-explorer-row:hover {
+  background-color: rgba(137, 92, 26, 0.12) !important;
+}
+
 .theme-light .bg-emerald-500\/20,
 .theme-light .bg-emerald-500\/25 {
   background-color: rgba(123, 225, 167, 0.22) !important;
