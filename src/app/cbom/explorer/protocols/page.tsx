@@ -55,13 +55,26 @@ function splitCipherSuites(cipherSuites: string) {
 }
 
 export default function CbomExplorerProtocolsPage() {
+  const exportHref = `data:application/json;charset=utf-8,${encodeURIComponent(
+    JSON.stringify(protocolRows, null, 2)
+  )}`;
+
   return (
     <div className="h-full">
-      <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-200">Protocols</h3>
-        <p className="mt-1 text-xs text-slate-400">
-          Element-wise protocol inventory based on the CBOM blueprint.
-        </p>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Protocols</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            Element-wise protocol inventory based on the CBOM blueprint.
+          </p>
+        </div>
+        <a
+          href={exportHref}
+          download="cbom-protocols.json"
+          className="rounded-lg border border-cyan-400/40 bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
+        >
+          Export to JSON
+        </a>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-white/10">
