@@ -16,25 +16,30 @@
       "static/chunks/main-app.js",
       "static/chunks/app/page.js"
     ],
-    "/asset-inventory/page": [
+    "/login/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/asset-inventory/page.js"
+      "static/chunks/app/login/page.js"
     ],
-    "/discoveries/page": [
+    "/signup/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/discoveries/page.js"
+      "static/chunks/app/signup/page.js"
     ],
-    "/cyber-rating/page": [
+    "/api/auth/signup/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/cyber-rating/page.js"
+      "static/chunks/app/api/auth/signup/route.js"
     ],
-    "/reporting/page": [
+    "/dashboard/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/reporting/page.js"
+      "static/chunks/app/dashboard/page.js"
+    ],
+    "/api/auth/login/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/login/route.js"
     ]
   }
 }

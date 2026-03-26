@@ -1,24 +1,72 @@
-import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+// app/api/auth/signup/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
-export async function POST(req: Request) {
-  const body = await req.json();
+const prisma = new PrismaClient();
 
-  const org = await prisma.organization.create({
-    data: {
-      name: body.orgName,
-      domains: body.domains.split(",").map((d: string) => d.trim()),
-    },
-  });
+export async function POST(req: NextRequest) {
+  try {
+    const { email, password, orgName, domains } = await req.json();
 
-  await prisma.user.create({
-    data: {
-      email: body.email,
-      password: body.password,
-      role: "admin",
-      orgId: org.id,
-    },
-  });
+    // 1. validation
+    if (!email || !password || !orgName || !domains) {
+      return NextResponse.json(
+        { success: false, message: "All fields are required" },
+        { status: 400 }
+      );
+    }
 
-  return NextResponse.json({ success: true });
+    // 2. check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        { success: false, message: "User already exists" },
+        { status: 400 }
+      );
+    }
+
+    // 3. hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 4. create organization
+    const org = await prisma.organization.create({
+      data: {
+        name: orgName,
+        domains, // must be array
+      },
+    });
+
+    // 5. create admin user
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        role: "admin",
+        orgId: org.id,
+      },
+    });
+
+    // 6. set session cookie
+    const response = NextResponse.json({ success: true });
+
+    response.cookies.set("session", user.id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    });
+
+    return response;
+
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, message: "Server error" },
+      { status: 500 }
+    );
+  }
 }

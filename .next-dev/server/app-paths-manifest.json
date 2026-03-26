@@ -1,6 +1,8 @@
 {
-  "/favicon.ico/route": "app/favicon.ico/route.js",
-  "/asset-inventory/page": "app/asset-inventory/page.js",
-  "/cyber-rating/page": "app/cyber-rating/page.js",
-  "/page": "app/page.js"
+  "/api/auth/signup/route": "app/api/auth/signup/route.js",
+  "/api/auth/login/route": "app/api/auth/login/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/page": "app/page.js",
+  "/signup/page": "app/signup/page.js",
+  "/login/page": "app/login/page.js"
 }
