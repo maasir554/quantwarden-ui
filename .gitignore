@@ -39,3 +39,5 @@ next-env.d.ts
 .DS_Store
 .vscode/
 .idea/
+
+/src/generated/prisma
