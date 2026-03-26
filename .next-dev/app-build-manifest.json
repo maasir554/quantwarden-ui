@@ -60,6 +60,16 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/cbom/explorer/protocols/page.js"
+    ],
+    "/crypto-posture/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/crypto-posture/page.js"
+    ],
+    "/cyber-rating/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/cyber-rating/page.js"
     ]
   }
 }
