@@ -30,7 +30,7 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Overview", icon: Radar, href: "/" },
+  { label: "Overview", icon: Radar, href: "/dashboard" },
   { label: "Asset Inventory", icon: Layers, href: "/asset-inventory" },
   { label: "Discoveries", icon: Search, href: "/discoveries" },
   { label: "CBOM", icon: Cpu, href: "/cbom" },
@@ -45,10 +45,10 @@ export default function DashboardShell({ title, children, headerAction }: Dashbo
   const pathname = usePathname();
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window === "undefined") {
-      return true;
+      return false;
     }
 
-    return window.localStorage.getItem(THEME_STORAGE_KEY) !== "light";
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark";
   });
 
   useEffect(() => {
