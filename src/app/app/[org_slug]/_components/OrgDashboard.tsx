@@ -12,6 +12,8 @@ import {
   User,
 } from "lucide-react";
 import TeamManagement from "./TeamManagement";
+import AssetManagement from "./AssetManagement";
+import AssetScanning from "./AssetScanning";
 
 interface OrgDashboardProps {
   org: any;
@@ -20,11 +22,13 @@ interface OrgDashboardProps {
 }
 
 const navItems = [
+  { id: "asset", label: "Asset Management", icon: Shield },
+  { id: "scan", label: "Asset Scanning", icon: Shield },
   { id: "team", label: "Team Management", icon: Users },
 ];
 
 export default function OrgDashboard({ org, currentUserRole, currentUserId }: OrgDashboardProps) {
-  const [activeSection, setActiveSection] = useState("team");
+  const [activeSection, setActiveSection] = useState("asset");
   const { data: sessionData } = useSession();
   const user = sessionData?.user;
 
@@ -141,6 +145,20 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId }: Or
               org={org}
               currentUserRole={currentUserRole}
               currentUserId={currentUserId}
+              isAdmin={isAdmin}
+            />
+          )}
+          {activeSection === "asset" && (
+            <AssetManagement
+              org={org}
+              currentUserRole={currentUserRole}
+              currentUserId={currentUserId}
+              isAdmin={isAdmin}
+            />
+          )}
+          {activeSection === "scan" && (
+            <AssetScanning
+              org={org}
               isAdmin={isAdmin}
             />
           )}

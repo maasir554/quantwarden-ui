@@ -57,17 +57,19 @@ export async function POST(req: NextRequest) {
     // Update Domains if provided
     if (domains && Array.isArray(domains)) {
       await prisma.$executeRawUnsafe(
-        `DELETE FROM "domain" WHERE "organizationId" = $1`,
+        `DELETE FROM "asset" WHERE "organizationId" = $1 AND "isRoot" = true AND type = 'domain'`,
         organizationId
       );
 
       for (const d of domains) {
         try {
-          const domainId = crypto.randomUUID();
+          const assetId = crypto.randomUUID();
           await prisma.$executeRawUnsafe(
-            `INSERT INTO "domain" (id, domain, "organizationId", verified, "createdAt") VALUES ($1, $2, $3, $4, $5)`,
-            domainId,
+            `INSERT INTO "asset" (id, value, type, "isRoot", "organizationId", verified, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            assetId,
             d,
+            "domain",
+            true,
             organizationId,
             false,
             new Date()

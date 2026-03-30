@@ -24,6 +24,8 @@ import {
   Crown,
   Maximize2,
   X,
+  Info,
+  ArrowRight,
 } from "lucide-react";
 
 interface TeamManagementProps {
@@ -104,8 +106,8 @@ function RoleDropdown({
         ref={triggerRef}
         type="button"
         onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
-        className={`flex items-center justify-between gap-2 font-bold rounded-lg border outline-none cursor-pointer transition-colors ${getRoleColor(currentRole)} ${
-          small ? "text-[10px] px-2.5 py-1 w-[110px]" : "text-xs px-3 py-1.5 w-[140px]"
+        className={`flex items-center justify-between gap-2 font-bold rounded-xl border outline-none cursor-pointer transition-colors ${getRoleColor(currentRole)} ${
+          small ? "text-[10px] px-2.5 py-2 w-[110px]" : "text-xs px-3 py-2 w-[140px]"
         }`}
       >
         <span className="truncate">{currentLabel}</span>
@@ -115,13 +117,13 @@ function RoleDropdown({
       {isOpen && dropdownPos && ReactDOM.createPortal(
         <div
           ref={dropdownRef}
-          className="fixed w-48 bg-white border border-amber-500/20 rounded-xl shadow-xl p-1.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed w-48 bg-white border border-amber-500/20 rounded-xl shadow-xl p-2.5 animate-in fade-in zoom-in-95 duration-100"
           style={{ top: dropdownPos.top, left: Math.max(8, dropdownPos.left), zIndex: 9999 }}
         >
-          <div className="px-2 pb-1.5 mb-1 text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider border-b border-amber-500/10">
+          <div className="px-1 pb-1.5 mb-1.5 text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider border-b border-amber-500/10">
             Select Role
           </div>
-          <div className="flex flex-col gap-1 max-h-[200px] overflow-y-auto">
+          <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto">
             {allRoles
               .filter((r) => r.id !== "owner")
               .map((r) => (
@@ -129,11 +131,12 @@ function RoleDropdown({
                   key={r.id}
                   type="button"
                   onClick={() => { onChange(r.id); setIsOpen(false); }}
-                  className={`text-left text-xs font-bold px-3 py-2.5 rounded-lg transition-colors border ${getRoleColor(r.id, true)} ${
-                    r.id === currentRole ? "ring-2 ring-[#8B0000]/30" : ""
+                  className={`flex items-center justify-between text-xs font-bold px-3 py-2.5 rounded-lg transition-colors border ${getRoleColor(r.id, true)} ${
+                    r.id === currentRole ? "ring-2 ring-inset ring-[#8B0000]/30" : ""
                   }`}
                 >
                   {r.name}
+                  {r.id === currentRole && <Check className="w-3.5 h-3.5 opacity-70" />}
                 </button>
               ))}
           </div>
@@ -176,7 +179,7 @@ function ExpandModal({ open, onClose, title, icon: Icon, badge, children }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col animate-in zoom-in-95 fade-in duration-200">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl h-[80vh] overflow-hidden flex flex-col animate-in zoom-in-95 fade-in duration-200">
         {/* Modal Header */}
         <div className="bg-[#fdf8f0] px-6 py-4 border-b border-amber-500/10 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -213,18 +216,18 @@ function SectionCard({ title, icon: Icon, badge, onExpand, children, className }
 }) {
   return (
     <section className={`bg-white/80 backdrop-blur-sm border border-amber-300/40 rounded-2xl shadow-sm overflow-hidden flex flex-col ${className || ""}`}>
-      <div className="bg-[#fdf8f0] px-5 py-3.5 border-b border-amber-500/10 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Icon className="w-4 h-4 text-[#8B0000] shrink-0" />
-          <h2 className="text-xs font-extrabold text-[#3d200a] uppercase tracking-wider truncate">{title}</h2>
+      <div className="bg-[#fdf8f0] px-4 py-2 border-b border-amber-500/10 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon className="w-3.5 h-3.5 text-[#8B0000] shrink-0" />
+          <h2 className="text-[11px] font-extrabold text-[#3d200a] uppercase tracking-wider truncate">{title}</h2>
           {badge}
         </div>
         <button
           onClick={onExpand}
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[#8a5d33] hover:bg-[#8B0000]/10 hover:text-[#8B0000] transition-colors shrink-0 cursor-pointer"
+          className="w-6 h-6 rounded-md flex items-center justify-center text-[#8a5d33] hover:bg-[#8B0000]/10 hover:text-[#8B0000] transition-colors shrink-0 cursor-pointer"
           title="Expand"
         >
-          <Maximize2 className="w-3.5 h-3.5" />
+          <Maximize2 className="w-3 h-3" />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
@@ -249,6 +252,7 @@ export default function TeamManagement({ org, currentUserRole, currentUserId, is
   // Invite input
   const [newInvites, setNewInvites] = useState<{ email: string; roleId: string }[]>([]);
   const [currentEmail, setCurrentEmail] = useState("");
+  const [currentInviteRole, setCurrentInviteRole] = useState(() => org.roles.find((r: any) => r.name.toLowerCase() === "analyst")?.id || "member");
   const [sendingInvites, setSendingInvites] = useState(false);
 
   // Member actions
@@ -301,8 +305,7 @@ export default function TeamManagement({ org, currentUserRole, currentUserId, is
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const emails = currentEmail.split(/[\s,]+/).map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0 && emailRegex.test(e));
     if (emails.length === 0) return;
-    const defaultRoleId = org.roles.find((r: any) => r.name.toLowerCase() === "analyst")?.id || "member";
-    const toAdd = emails.filter((email) => !newInvites.some((inv) => inv.email === email)).map((email) => ({ email, roleId: defaultRoleId }));
+    const toAdd = emails.filter((email) => !newInvites.some((inv) => inv.email === email)).map((email) => ({ email, roleId: currentInviteRole }));
     if (toAdd.length > 0) setNewInvites([...newInvites, ...toAdd]);
     setCurrentEmail("");
   };
@@ -492,27 +495,42 @@ export default function TeamManagement({ org, currentUserRole, currentUserId, is
   // ═══════════════════════════════════════
   const renderInviteForm = () => (
     <form onSubmit={handleAddEmail} className="flex flex-col h-full">
-      {/* Fixed top: description + email input */}
-      <div className="px-5 pt-4 pb-3 space-y-3 shrink-0">
-        <p className="text-xs text-[#8a5d33] leading-relaxed">
-          Send an invitation link to new team members. They will receive an email with instructions.
-        </p>
-        <div>
-          <label className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-wider mb-1.5 block">Email Addresses</label>
+      {/* Fixed top: email input with inline add button */}
+      <div className="px-4 pt-3 pb-2 shrink-0">
+        <div className="flex items-center gap-1.5 mb-2">
+          <label className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-wider">Email Addresses</label>
+          <div className="relative group/info">
+            <button type="button" className="w-4 h-4 rounded-full bg-amber-500/10 flex items-center justify-center text-[#8a5d33]/50 hover:bg-amber-500/20 hover:text-[#8a5d33] transition-colors cursor-help">
+              <Info className="w-2.5 h-2.5" />
+            </button>
+            <div className="absolute left-0 top-full mt-1.5 w-52 bg-white text-[#8a5d33] text-[10px] leading-relaxed px-3 py-2 rounded-lg shadow-lg border border-amber-500/20 opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-150 pointer-events-none z-50">
+              Send an invitation link to new team members. They will receive an email with instructions.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <RoleDropdown currentRole={currentInviteRole} roles={org.roles} systemRoles={systemRoles} onChange={setCurrentInviteRole} small />
           <input
             type="text"
             value={currentEmail}
             onChange={(e) => setCurrentEmail(e.target.value)}
             placeholder="colleague@company.com"
-            className="w-full bg-white border border-amber-500/30 rounded-xl px-4 py-2.5 text-[#3d200a] placeholder:text-[#8a5d33]/40 focus:outline-none focus:ring-2 focus:ring-[#8B0000]/50 transition-all text-sm"
+            className="flex-1 min-w-0 bg-white border border-amber-500/30 rounded-xl px-4 py-2 text-[#3d200a] placeholder:text-[#8a5d33]/40 focus:outline-none focus:ring-2 focus:ring-[#8B0000]/50 transition-all text-sm"
           />
+          <button
+            type="submit"
+            disabled={!currentEmail.trim()}
+            className="w-[34px] h-[34px] rounded-full bg-[#8B0000] text-white flex items-center justify-center shrink-0 self-center hover:bg-[#730000] transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
       {/* Scrollable middle: queued invites */}
       {newInvites.length > 0 && (
-        <div className="flex-1 overflow-y-auto min-h-0 px-5 space-y-2 py-1">
+        <div className="flex-1 overflow-y-auto min-h-0 px-4 space-y-1.5 py-1">
           {newInvites.map((inv) => (
-            <div key={inv.email} className="flex items-center justify-between bg-[#fdf8f0] border border-amber-500/15 rounded-lg px-3 py-2">
+            <div key={inv.email} className="flex items-center justify-between bg-[#fdf8f0] border border-amber-500/15 rounded-lg px-3 py-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 <Mail className="w-3.5 h-3.5 text-amber-500/50 shrink-0" />
                 <span className="text-xs font-semibold text-[#3d200a] truncate">{inv.email}</span>
@@ -527,18 +545,15 @@ export default function TeamManagement({ org, currentUserRole, currentUserId, is
           ))}
         </div>
       )}
-      {/* Fixed bottom: action buttons */}
-      <div className="px-5 py-3 shrink-0 flex gap-2 border-t border-amber-500/10">
-        <button type="submit" disabled={!currentEmail.trim()} className="flex items-center gap-2 px-4 py-2.5 bg-white border border-amber-500/30 text-[#3d200a] rounded-xl font-bold text-xs hover:bg-[#fdf1df] transition-all disabled:opacity-40">
-          <Plus className="w-3.5 h-3.5" /> Add
-        </button>
-        {newInvites.length > 0 && (
-          <button type="button" onClick={handleSendInvites} disabled={sendingInvites} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#8B0000] text-white rounded-xl font-bold text-xs shadow-md shadow-[#8B0000]/20 hover:bg-[#730000] transition-all disabled:opacity-50">
+      {/* Fixed bottom: send button (only when invites queued) */}
+      {newInvites.length > 0 && (
+        <div className="px-4 py-2.5 shrink-0 border-t border-amber-500/10">
+          <button type="button" onClick={handleSendInvites} disabled={sendingInvites} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#8B0000] text-white rounded-xl font-bold text-xs shadow-md shadow-[#8B0000]/20 hover:bg-[#730000] transition-all disabled:opacity-50">
             {sendingInvites ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             Send {newInvites.length} Invite{newInvites.length > 1 ? "s" : ""}
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </form>
   );
 

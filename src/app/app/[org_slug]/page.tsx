@@ -77,15 +77,27 @@ export default async function OrganizationPage(props: { params: Promise<{ org_sl
 
   const memberRole = memberRows[0].role;
 
-  // Build org data with domains and roles
-  const org = { ...orgBasic, domains: [] as string[], roles: [] as any[] };
+  // Build org data
+  const org: any = { ...orgBasic, domains: [] as string[], assets: [] as any[], roles: [] as any[] };
 
-  // Fetch domains
-  const domainsRows = await prisma.$queryRawUnsafe<{ domain: string }[]>(
-    `SELECT domain FROM "domain" WHERE "organizationId" = $1`,
-    org.id
-  );
-  org.domains = domainsRows.map(d => d.domain);
+  // Fetch all assets with a fallback for database branch schema mismatches
+  let assetsRows: any[] = [];
+  try {
+    assetsRows = await prisma.$queryRawUnsafe<{ id: string, value: string, type: string, isRoot: boolean, parentId: string | null, verified: boolean, createdAt: Date, scanStatus: string, lastScanDate: Date | null }[]>(
+      `SELECT id, value, type, "isRoot", "parentId", verified, "createdAt", "scanStatus", "lastScanDate" FROM "asset" WHERE "organizationId" = $1`,
+      org.id
+    );
+  } catch (err) {
+    // Fall back to old schema if Vercel preview DB hasn't been migrated
+    assetsRows = await prisma.$queryRawUnsafe<{ id: string, value: string, type: string, isRoot: boolean, parentId: string | null, verified: boolean, createdAt: Date }[]>(
+      `SELECT id, value, type, "isRoot", "parentId", verified, "createdAt" FROM "asset" WHERE "organizationId" = $1`,
+      org.id
+    );
+  }
+  
+  org.assets = assetsRows;
+  // Keep org.domains populated for OnboardingFlow
+  org.domains = assetsRows.filter(a => a.isRoot && a.type === 'domain').map(a => a.value);
 
   // Fetch roles
   const rolesRows = await prisma.$queryRawUnsafe<{ id: string, name: string, permissions: string }[]>(

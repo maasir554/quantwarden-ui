@@ -103,7 +103,7 @@ model Organization {
   members      Member[]
   invitations  Invitation[]
   roles        Role[]
-  domains      Domain[]
+  assets       Asset[]
   joinRequests JoinRequest[]
 
   @@unique([slug])
@@ -169,14 +169,37 @@ model JoinRequest {
   @@map("join_request")
 }
 
-model Domain {
+model Asset {
   id             String       @id @default(cuid())
-  domain         String       @unique
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  value          String
+  type           String       @default("domain") // "domain" or "ip"
+  isRoot         Boolean      @default(true)
+  parentId       String?
+  parent         Asset?       @relation("AssetHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children       Asset[]      @relation("AssetHierarchy")
   verified       Boolean      @default(false)
+  scanStatus     String       @default("idle") // idle, scanning, failed
+  lastScanDate   DateTime?
+  scans          AssetScan[]
   createdAt      DateTime     @default(now())
 
+  @@unique([organizationId, value])
   @@index([organizationId])
-  @@map("domain")
+  @@map("asset")
+}
+
+model AssetScan {
+  id          String   @id @default(cuid())
+  assetId     String
+  asset       Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  type        String   @default("pyssl") // The type of scan
+  status      String   @default("pending") // pending, completed, failed
+  resultData  String?  // JSON text representation of the scanner output
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([assetId])
+  @@map("asset_scan")
 }
