@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import {
+  AlertTriangle,
   BadgeCheck,
   Check,
   Clock3,
   Loader2,
   Mail,
-  Shield,
+  Trash2,
   User,
   X,
 } from "lucide-react";
@@ -77,6 +78,10 @@ export default function UserProfilePage() {
   const [invitesError, setInvitesError] = useState("");
   const [invites, setInvites] = useState<InvitationsPayload>({ active: [], history: [] });
   const [actioningInviteId, setActioningInviteId] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteEmailInput, setDeleteEmailInput] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!sessionLoading && !sessionData?.session) {
@@ -174,6 +179,36 @@ export default function UserProfilePage() {
     }
   };
 
+  const openDeleteModal = () => {
+    setDeleteEmailInput("");
+    setDeleteError("");
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteProfile = async () => {
+    setDeleteError("");
+    setIsDeleting(true);
+
+    try {
+      const res = await fetch("/api/user/delete", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: deleteEmailInput }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Could not delete profile.");
+      }
+
+      window.location.href = "/login";
+    } catch (error: any) {
+      setDeleteError(error?.message || "Could not delete profile.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (sessionLoading) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
@@ -199,12 +234,9 @@ export default function UserProfilePage() {
               backgroundSize: "32px 32px",
             }}
           />
-          <div className="relative z-10 flex items-start gap-3">
-            <Shield className="w-7 h-7 text-white/90 shrink-0 mt-0.5" />
-            <div>
-              <h1 className="text-3xl font-black text-white tracking-tight">User Profile</h1>
-              <p className="text-white/75 mt-1 text-base">Update your account details and manage your invitations.</p>
-            </div>
+          <div className="relative z-10">
+            <h1 className="text-3xl font-black text-white tracking-tight">Profile Manager</h1>
+            <p className="text-white/75 mt-1 text-base">Update your account details and manage your invitations.</p>
           </div>
         </div>
 
@@ -351,7 +383,79 @@ export default function UserProfilePage() {
             </div>
           )}
         </section>
+
+        <section className="rounded-2xl border border-[#8B0000]/30 bg-[#8B0000]/6 backdrop-blur-md p-5 shadow-lg shadow-[#8B0000]/10">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4 text-[#8B0000]" />
+            <h2 className="text-lg font-bold text-[#8B0000]">Danger Zone</h2>
+          </div>
+          <p className="text-sm text-[#6f4827] mb-4">
+            Deleting your profile is permanent. You will lose access to your account data and invitations.
+          </p>
+          <button
+            onClick={openDeleteModal}
+            className="inline-flex items-center gap-2 rounded-xl border border-[#8B0000]/35 bg-white px-4 py-2.5 text-[#8B0000] font-semibold hover:bg-[#8B0000]/8 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Profile
+          </button>
+        </section>
       </div>
+
+      {showDeleteModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45"
+            onClick={() => {
+              if (!isDeleting) setShowDeleteModal(false);
+            }}
+          />
+          <div className="relative w-full max-w-lg rounded-2xl border border-[#8B0000]/25 bg-white p-6 shadow-2xl shadow-black/25">
+            <h3 className="text-xl font-black text-[#3d200a] tracking-tight">Delete Profile</h3>
+            <p className="text-sm text-[#6f4827] mt-2">
+              Type your exact account email to confirm permanent profile deletion.
+            </p>
+
+            <div className="mt-4 rounded-lg bg-[#fff5f5] border border-[#8B0000]/15 px-3 py-2 text-sm text-[#8B0000]">
+              Account email: <span className="font-bold">{sessionData?.user?.email}</span>
+            </div>
+
+            <div className="mt-4">
+              <label className="text-xs uppercase tracking-widest text-[#8a5d33] mb-1 block">Confirm Email</label>
+              <input
+                value={deleteEmailInput}
+                onChange={(e) => setDeleteEmailInput(e.target.value)}
+                className="w-full rounded-xl border border-[#8B0000]/30 bg-white px-3 py-2.5 text-[#3d200a] font-medium outline-none focus:ring-2 focus:ring-[#8B0000]/30"
+                placeholder="Type your account email"
+                autoFocus
+              />
+            </div>
+
+            {deleteError ? <p className="text-sm text-[#8B0000] mt-3">{deleteError}</p> : null}
+
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl border border-amber-500/25 text-[#6f4827] font-semibold hover:bg-[#fdf1df] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteProfile}
+                disabled={
+                  isDeleting ||
+                  deleteEmailInput.trim().toLowerCase() !== (sessionData?.user?.email || "").trim().toLowerCase()
+                }
+                className="px-4 py-2.5 rounded-xl bg-[#8B0000] text-white font-semibold hover:bg-[#730000] disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Permanently Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
 import AssetIntelligenceClient from "./_components/AssetIntelligenceClient";
 
-export default async function AssetIntelligencePage({ params }: { params: Promise<{ org_slug: string, asset_id: string }> | { org_slug: string, asset_id: string } }) {
+export default async function AssetIntelligencePage({ params }: { params: Promise<{ org_slug: string; asset_id: string }> }) {
   // Await params for Next.js async params API
   const resolvedParams = await params;
   
