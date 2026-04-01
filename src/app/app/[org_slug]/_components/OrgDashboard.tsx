@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -18,11 +17,13 @@ import OrgOverview from "./OrgOverview";
 import NmapScanning from "./NmapScanning";
 import NmapOverview from "./NmapOverview";
 import { Activity, Server } from "lucide-react";
+import type { DashboardSection } from "./dashboard-sections";
 
 interface OrgDashboardProps {
   org: any;
   currentUserRole: string;
   currentUserId: string;
+  activeSection: DashboardSection;
 }
 
 const navItems = [
@@ -34,8 +35,7 @@ const navItems = [
   { id: "team", label: "Team Management", icon: Users },
 ];
 
-export default function OrgDashboard({ org, currentUserRole, currentUserId }: OrgDashboardProps) {
-  const [activeSection, setActiveSection] = useState("overview");
+export default function OrgDashboard({ org, currentUserRole, currentUserId, activeSection }: OrgDashboardProps) {
   const { data: sessionData } = useSession();
   const user = sessionData?.user;
 
@@ -84,9 +84,9 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId }: Or
             const Icon = item.icon;
             const active = activeSection === item.id;
             return (
-              <button
+              <Link
                 key={item.id}
-                onClick={() => setActiveSection(item.id)}
+                href={`/app/${org.slug}/${item.id}`}
                 className={`group flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition-all cursor-pointer ${
                   active
                     ? "bg-white/20 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.3)]"
@@ -96,7 +96,7 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId }: Or
                 <Icon className={`h-4.5 w-4.5 shrink-0 ${active ? "text-white" : "text-red-300 group-hover:text-white"}`} />
                 <span className="font-bold">{item.label}</span>
                 <ChevronRight className={`ml-auto h-4 w-4 transition-transform ${active ? "rotate-90 text-white/50" : "text-red-400 group-hover:text-white/50"}`} />
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -128,9 +128,9 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId }: Or
           const Icon = item.icon;
           const active = activeSection === item.id;
           return (
-            <button
+            <Link
               key={item.id}
-              onClick={() => setActiveSection(item.id)}
+              href={`/app/${org.slug}/${item.id}`}
               className={`shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                 active
                   ? "bg-[#8B0000] text-white shadow-md"
@@ -139,7 +139,7 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId }: Or
             >
               <Icon className="w-4 h-4" />
               {item.label}
-            </button>
+            </Link>
           );
         })}
       </div>

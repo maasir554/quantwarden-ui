@@ -31,8 +31,8 @@ export async function GET(req: NextRequest) {
     // Fetch all assets for the org, and efficiently bundle the latest SSL scan
     const assets = await prisma.$queryRawUnsafe<any[]>(
       `SELECT 
-         a.id, a.value, a.type, a."isRoot", a."parentId",
-         (SELECT row_to_json(s) FROM "asset_scan" s WHERE s."assetId" = a.id AND s.type = 'pyssl' ORDER BY s."createdAt" DESC LIMIT 1) as "latestScan"
+         a.id, a.value, a.type, a."isRoot", a."parentId", a."scanStatus", a."lastScanDate",
+         (SELECT row_to_json(s) FROM "asset_scan" s WHERE s."assetId" = a.id AND s.type = 'openssl' ORDER BY s."createdAt" DESC LIMIT 1) as "latestScan"
        FROM "asset" a
        WHERE a."organizationId" = $1
        ORDER BY a.value ASC`,

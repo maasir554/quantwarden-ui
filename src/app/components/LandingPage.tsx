@@ -33,32 +33,32 @@ export default function LandingPage() {
 
   const features = [
     {
-      icon: <FileKey className="w-6 h-6 text-[#8B0000]" />,
+      icon: FileKey,
       title: "CertIn-CBOM",
       desc: "Maintain a Cryptographic Bill of Materials for your organization as advised by Cert-In (Indian Computer Emergency Response Team) national nodal agency."
     },
     {
-      icon: <Radar className="w-6 h-6 text-[#8B0000]" />,
+      icon: Radar,
       title: "Scan for Assets",
       desc: "Automatically discover subdomains and open ports tied securely to your root domain without manual intervention."
     },
     {
-      icon: <ShieldCheck className="w-6 h-6 text-[#8B0000]" />,
-      title: "Encryption Safety Analysis",
+      icon: ShieldCheck,
+      title: "Encryption Analysis",
       desc: "Receive actionable safety scores, detect post-quantum cryptography algorithms, grade key sizes, and more."
     },
     {
-      icon: <Clock className="w-6 h-6 text-[#8B0000]" />,
+      icon: Clock,
       title: "Scheduled Scans",
       desc: "Automate continuous monitoring over regular intervals to keep your security posture completely up to date."
     },
     {
-      icon: <Key className="w-6 h-6 text-[#8B0000]" />,
+      icon: Key,
       title: "Role-Based Access",
       desc: "Delegate tight governance and custom roles, strictly controlled by individual enterprise administrators."
     },
     {
-      icon: <Building2 className="w-6 h-6 text-[#8B0000]" />,
+      icon: Building2,
       title: "Join or Create Entities",
       desc: "Login and configure your own enterprise organization, or join an existing one instantly via secure invite link or code."
     }
@@ -83,7 +83,7 @@ export default function LandingPage() {
 
           <div className="flex items-center gap-2">
             <Shield className="w-8 h-8 text-[#8B0000]" strokeWidth={2} />
-            <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isScrolled ? "max-w-[200px] opacity-100" : "max-w-0 opacity-0"}`}>
+            <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isScrolled ? "max-w-50 opacity-100" : "max-w-0 opacity-0"}`}>
               <span className="text-xl font-extrabold text-[#5f3512] tracking-tight whitespace-nowrap">
                 Quant<span className="text-[#8B0000]">Warden</span>
               </span>
@@ -116,7 +116,7 @@ export default function LandingPage() {
         <div className="relative w-full">
           {/* Subtle Bottom-Left Grid */}
           <div
-            className="absolute bottom-0 left-0 w-[40vw] h-[28rem] opacity-30 pointer-events-none hidden md:block"
+            className="absolute bottom-0 left-0 w-[40vw] h-112 opacity-30 pointer-events-none hidden md:block"
             style={{
               backgroundImage: "linear-gradient(#8B0000 1px, transparent 1px), linear-gradient(90deg, #8B0000 1px, transparent 1px)",
               backgroundSize: "32px 32px",
@@ -127,7 +127,7 @@ export default function LandingPage() {
 
           {/* Subtle Bottom-Right Grid */}
           <div
-            className="absolute bottom-0 right-0 w-[40vw] h-[28rem] opacity-30 pointer-events-none hidden md:block"
+            className="absolute bottom-0 right-0 w-[40vw] h-112 opacity-30 pointer-events-none hidden md:block"
             style={{
               backgroundImage: "linear-gradient(#8B0000 1px, transparent 1px), linear-gradient(90deg, #8B0000 1px, transparent 1px)",
               backgroundSize: "32px 32px",
@@ -188,20 +188,45 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feat, idx) => (
+            {features.map((feat, idx) => {
+              const iconGradientId = `feature-icon-grad-${idx}`;
+              return (
               <div
                 key={idx}
-                className="bg-white/40 backdrop-blur-md rounded-2xl p-8 border border-amber-300/40 shadow-lg hover:shadow-xl hover:bg-white/60 transition-all group"
+                className="group rounded-3xl p-8 border border-amber-300/45 bg-white/45 backdrop-blur-md shadow-lg transition-all duration-700 ease-out hover:rounded-none hover:bg-[linear-gradient(160deg,#fff4d9_0%,#fde68a_38%,#fbbf24_100%)] hover:shadow-xl hover:shadow-[#8B0000]/10 hover:-translate-y-0.5 h-72"
               >
-                <div className="bg-[#8B0000]/10 w-14 h-14 flex items-center justify-center rounded-xl mb-6 group-hover:scale-110 transition-transform">
-                  {feat.icon}
+                <div className="h-full flex flex-col overflow-hidden">
+                  <div className="grow flex items-center justify-center overflow-hidden transition-all duration-700 ease-out group-hover:grow-0 group-hover:max-h-0">
+                    <feat.icon
+                      className="w-24 h-24 transition-all duration-700 ease-out group-hover:opacity-0 group-hover:scale-75 group-hover:-translate-y-8"
+                      style={{ stroke: `url(#${iconGradientId})` }}
+                    >
+                      <defs>
+                        <linearGradient id={iconGradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#fde68a" />
+                          <stop offset="55%" stopColor="#fbbf24" />
+                          <stop offset="100%" stopColor="#f59e0b" />
+                        </linearGradient>
+                      </defs>
+                    </feat.icon>
+                  </div>
+
+                  <div className="mt-auto transition-transform duration-700 ease-out group-hover:-translate-y-14">
+                    <div className="flex items-center gap-2 text-[#8B0000] transition-colors duration-700">
+                    <feat.icon className="w-0 h-0 opacity-0 text-[#5b1f12] transition-all duration-600 group-hover:w-5 group-hover:h-5 group-hover:opacity-100" />
+                      <h3 className="text-xl font-extrabold">{feat.title}</h3>
+                    <span className="ml-auto inline-flex items-center justify-center w-9 h-9 rounded-full bg-[#8B0000] border border-[#730000] text-white transition-all duration-600 group-hover:opacity-0 group-hover:scale-90 group-hover:-translate-y-1">
+                      <ArrowRight className="w-4 h-4" />
+                    </span>
+                  </div>
+
+                    <p className="max-h-0 opacity-0 overflow-hidden text-[#6b2c16] leading-relaxed font-normal transition-all duration-700 ease-out group-hover:max-h-40 group-hover:opacity-100 group-hover:mt-4">
+                      {feat.desc}
+                    </p>
+                  </div>
                 </div>
-                <h3 className="text-xl font-bold text-[#3d200a] mb-3">{feat.title}</h3>
-                <p className="text-[#8a5d33] leading-relaxed font-normal">
-                  {feat.desc}
-                </p>
               </div>
-            ))}
+            )})}
           </div>
         </section>
 

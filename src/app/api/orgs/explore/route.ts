@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
        LEFT JOIN LATERAL (
           SELECT "resultData", "completedAt" 
           FROM "asset_scan" 
-          WHERE "assetId" = a."id"
+          WHERE type = 'openssl' AND "assetId" = a."id"
           ORDER BY "completedAt" DESC 
           LIMIT 1
        ) s ON true
@@ -57,17 +58,13 @@ export async function GET(req: NextRequest) {
 
     for (const row of rows) {
       if (!row.resultData) continue;
-      try {
-        const p = typeof row.resultData === 'string' ? JSON.parse(row.resultData) : row.resultData;
-        const ci = p.connection_info || {};
-        const cert = p.certificate || {};
-        const cipherName = ci.protocol?.cipher_suite?.name;
-        if (cipherName) cipherOptions.add(cipherName);
-        const tlsVer = ci.protocol?.version;
-        if (tlsVer) tlsOptions.add(tlsVer);
-        const pk = cert.public_key;
-        if (pk?.algorithm && pk?.size) keySizeOptions.add(`${pk.algorithm} ${pk.size}-bit`);
-      } catch {}
+      const parsed = parseOpenSSLScanResult(row.resultData);
+      if (!parsed.summary) continue;
+      if (parsed.summary.preferredCipher) cipherOptions.add(parsed.summary.preferredCipher);
+      if (parsed.summary.primaryTlsVersion) tlsOptions.add(parsed.summary.primaryTlsVersion);
+      if (parsed.summary.publicKeyAlgorithm && parsed.summary.publicKeyBits) {
+        keySizeOptions.add(`${parsed.summary.publicKeyAlgorithm} ${parsed.summary.publicKeyBits}-bit`);
+      }
     }
 
     let filtered = [];
@@ -80,25 +77,21 @@ export async function GET(req: NextRequest) {
 
       let parsed: any = null;
       if (row.resultData) {
-        try {
-          parsed = typeof row.resultData === 'string' ? JSON.parse(row.resultData) : row.resultData;
-        } catch (e) {}
+        parsed = parseOpenSSLScanResult(row.resultData);
       }
 
       // If no scan data but there is a structural filter, skip (unless we want to see unscanned assets? For now, we only show what matches).
-      if ((filterVal === "attention" || cipherVal || keySizeVal || tlsVal) && !parsed) {
+      if ((filterVal === "attention" || cipherVal || keySizeVal || tlsVal) && !parsed?.summary) {
         continue;
       }
 
       let summary = null;
-      if (parsed) {
-        const sa = parsed.security_analysis || {};
-        const ci = parsed.connection_info || {};
-        const cert = parsed.certificate || {};
+      if (parsed?.summary) {
+        const derived = parsed.summary;
 
         // 2. Cipher Filter
         if (cipherVal) {
-          const cipherSuite = ci.protocol?.cipher_suite?.name || "";
+          const cipherSuite = derived.preferredCipher || "";
           if (cipherSuite !== cipherVal) {
             continue;
           }
@@ -106,8 +99,9 @@ export async function GET(req: NextRequest) {
 
         // 2b. Key Size Filter (e.g. "RSA 2048-bit")
         if (keySizeVal) {
-          const pk = cert.public_key;
-          const actualKey = pk ? `${pk.algorithm || 'Unknown'} ${pk.size}-bit` : "";
+          const actualKey = derived.publicKeyAlgorithm && derived.publicKeyBits
+            ? `${derived.publicKeyAlgorithm} ${derived.publicKeyBits}-bit`
+            : "";
           if (actualKey !== keySizeVal) {
             continue;
           }
@@ -115,17 +109,17 @@ export async function GET(req: NextRequest) {
 
         // 2c. TLS Version Filter
         if (tlsVal) {
-          const tlsVersion = ci.protocol?.version || "";
+          const tlsVersion = derived.primaryTlsVersion || "";
           if (tlsVersion !== tlsVal) {
             continue;
           }
         }
 
         // 3. Immediate Attention Filter
-        let isInvalid = sa.certificate_valid === false;
-        let daysLeft = cert.validity?.days_remaining;
+        let isInvalid = derived.certificateValid === false;
+        let daysLeft = derived.daysRemaining;
         let isExpiring = typeof daysLeft === 'number' && daysLeft <= 30;
-        let isVuln = sa.tls_version_secure === false;
+        let isVuln = derived.tlsVersionSecure === false;
 
         if (filterVal === "attention") {
           if (!isInvalid && !isExpiring && !isVuln) {
@@ -133,13 +127,14 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        const pk = cert.public_key;
         summary = {
            valid: !isInvalid,
            daysRemaining: daysLeft,
-           cipher: ci.protocol?.cipher_suite?.name,
-           tls: ci.protocol?.version,
-           keySize: pk ? `${pk.algorithm || 'Unknown'} ${pk.size}-bit` : null,
+           cipher: derived.preferredCipher,
+           tls: derived.primaryTlsVersion,
+           keySize: derived.publicKeyAlgorithm && derived.publicKeyBits
+             ? `${derived.publicKeyAlgorithm} ${derived.publicKeyBits}-bit`
+             : null,
            issue: isInvalid ? "Invalid Certificate" : isExpiring ? "Expiring Soon" : isVuln ? "TLS Vuln" : ""
         };
       }

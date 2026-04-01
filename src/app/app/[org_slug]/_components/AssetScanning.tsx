@@ -12,41 +12,18 @@ import {
   ChevronUp,
   AlertTriangle,
   CheckCircle2,
+  Clock,
   Lock,
   Calendar,
   Zap,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
+import { useScanActivity } from "@/components/scan-activity-provider";
 
 interface AssetScanningProps {
   org: any;
   isAdmin: boolean;
-}
-
-interface SSLScanResult {
-  security_analysis?: {
-    certificate_valid?: boolean;
-    tls_version_secure?: boolean;
-    strong_cipher?: boolean;
-    key_size_adequate?: boolean;
-    self_signed_cert?: boolean;
-    warnings?: string[];
-  };
-  certificate?: {
-    issuer?: { common_name?: string };
-    subject?: { common_name?: string };
-    validity?: { not_valid_after?: string; days_remaining?: number };
-    signature_algorithm?: { name?: string };
-    public_key?: { algorithm?: string; size?: number };
-    extensions?: { subject_alternative_names?: string[] };
-  };
-  connection_info?: {
-    protocol?: { 
-      version?: string;
-      cipher_suite?: { name?: string };
-    };
-  };
-  error?: string;
 }
 
 interface ScanData {
@@ -64,6 +41,7 @@ interface ScandAsset {
   type: string;
   isRoot: boolean;
   parentId: string | null;
+  scanStatus?: string | null;
   latestScan: ScanData | null;
 }
 
@@ -72,10 +50,17 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "successful" | "failed" | "unscanned">("all");
-
-  const [scanQueue, setScanQueue] = useState<string[]>([]);
-  const [activeScans, setActiveScans] = useState<number>(0);
   const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
+  const {
+    hydrated,
+    stateVersion,
+    runningTasks,
+    queuedTasks,
+    fullScan,
+    isFullScanActive,
+    queueAssetScan,
+    queueFullScan,
+  } = useScanActivity(org.id);
 
   const fetchAssets = useCallback(async () => {
     try {
@@ -95,70 +80,63 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
     fetchAssets();
   }, [fetchAssets]);
 
-  // Concurrent Execution Queue for Scans
   useEffect(() => {
-    if (scanQueue.length > 0 && activeScans < 3) { // Process 3 concurrently
-      const nextAssetId = scanQueue[0];
-      setScanQueue((q) => q.slice(1));
-      setActiveScans((count) => count + 1);
+    if (!hydrated) return;
+    fetchAssets();
+  }, [hydrated, stateVersion, fetchAssets]);
 
-      // Pre-emptively update UI
-      setAssets(prev => prev.map(a => a.id === nextAssetId ? {
-        ...a, latestScan: { id: "temp", type: "pyssl", status: "pending", resultData: null, createdAt: new Date().toISOString(), completedAt: null }
-      } : a));
-
-      fetch("/api/orgs/scans/pyssl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assetId: nextAssetId, orgId: org.id }),
-      })
-        .then(() => {
-          // Re-fetch to get real db record
-          fetchAssets();
-        })
-        .catch(() => {})
-        .finally(() => {
-          setActiveScans((count) => count - 1);
-        });
-    }
-  }, [scanQueue, activeScans, org.id, fetchAssets]);
+  useEffect(() => {
+    if (!hydrated || (runningTasks.length === 0 && queuedTasks.length === 0)) return;
+    const interval = window.setInterval(() => {
+      void fetchAssets();
+    }, 4000);
+    return () => window.clearInterval(interval);
+  }, [fetchAssets, hydrated, queuedTasks.length, runningTasks.length]);
 
   const handleScan = (assetId: string) => {
-    if (!scanQueue.includes(assetId)) {
-      setScanQueue((q) => [...q, assetId]);
-    }
+    const asset = assets.find((item) => item.id === assetId);
+    if (!asset) return;
+    queueAssetScan({
+      orgId: org.id,
+      orgSlug: org.slug,
+      assetId,
+      assetValue: asset.value,
+    });
   };
 
   const handleScanAll = () => {
-    const ids = assets
+    const scanableAssets = assets
       .filter((a) => a.type === "domain")
       .filter((a) => !a.latestScan || a.latestScan.status !== "pending")
-      .map((a) => a.id);
-    
-    // Add unique ones to queue
-    setScanQueue(prev => Array.from(new Set([...prev, ...ids])));
+      .map((a) => ({ id: a.id, value: a.value }));
+
+    queueFullScan({
+      orgId: org.id,
+      orgSlug: org.slug,
+      assets: scanableAssets,
+    });
   };
+
+  const activeTaskByAsset = new Map(
+    [...runningTasks, ...queuedTasks].map((task) => [task.assetId, task])
+  );
 
   const domainAssets = assets.filter(a => a.type === "domain");
   const totalDiscovered = domainAssets.length;
-  const unscanned = domainAssets.filter(a => !a.latestScan).length;
-  const scanFailed = domainAssets.filter(a => 
-    a.latestScan && (a.latestScan.status === "failed" || a.latestScan.resultData?.includes('"error"'))
-  ).length;
-  const scanSuccessful = domainAssets.filter(a => 
-    a.latestScan && a.latestScan.status === "completed" && !a.latestScan.resultData?.includes('"error"')
-  ).length;
+  const unscanned = domainAssets.filter(a => !a.latestScan && !activeTaskByAsset.has(a.id)).length;
+  const scanFailed = domainAssets.filter((asset) => asset.latestScan?.status === "failed").length;
+  const scanSuccessful = domainAssets.filter((asset) => asset.latestScan?.status === "completed").length;
 
   let filteredAssets = domainAssets.filter(
     (a) => a.value.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (filterType === "successful") {
-    filteredAssets = filteredAssets.filter(a => a.latestScan && a.latestScan.status === "completed" && !a.latestScan.resultData?.includes('"error"'));
+    filteredAssets = filteredAssets.filter((asset) => asset.latestScan?.status === "completed");
   } else if (filterType === "failed") {
-    filteredAssets = filteredAssets.filter(a => a.latestScan && (a.latestScan.status === "failed" || a.latestScan.resultData?.includes('"error"')));
+    filteredAssets = filteredAssets.filter((asset) => asset.latestScan?.status === "failed");
   } else if (filterType === "unscanned") {
-    filteredAssets = filteredAssets.filter(a => !a.latestScan);
+    filteredAssets = filteredAssets.filter((asset) => !asset.latestScan && !activeTaskByAsset.has(asset.id));
   }
 
   const renderScanDetails = (scan: ScanData) => {
@@ -166,7 +144,7 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
       return (
         <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
           <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
-          <p className="text-sm font-semibold text-amber-700">SSL Scan currently running...</p>
+          <p className="text-sm font-semibold text-amber-700">OpenSSL TLS scan currently running...</p>
         </div>
       );
     }
@@ -192,12 +170,7 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
 
     if (!scan.resultData) return null;
 
-    let parsed: SSLScanResult;
-    try {
-      parsed = JSON.parse(scan.resultData);
-    } catch {
-      return <p className="text-sm text-red-500">Failed to parse JSON output.</p>;
-    }
+    const parsed = parseOpenSSLScanResult(scan.resultData);
 
     if (parsed.error) {
       return (
@@ -208,10 +181,19 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
       );
     }
 
-    const sa = parsed.security_analysis;
-    const cert = parsed.certificate;
-    const conn = parsed.connection_info;
-    const sans = cert?.extensions?.subject_alternative_names || [];
+    if (!parsed.raw || !parsed.summary) {
+      return <p className="text-sm text-red-500">Stored scan payload is missing OpenSSL profile data.</p>;
+    }
+
+    const payload = parsed.raw;
+    const summary = parsed.summary;
+    const sans = payload.certificate.san_dns || [];
+    const activeProbe =
+      payload.tls_versions.find(
+        (probe) => probe.supported && (probe.negotiated_protocol || probe.tls_version) === summary.primaryTlsVersion
+      ) ||
+      payload.tls_versions.find((probe) => probe.supported) ||
+      null;
 
     const Item = ({ label, icon: Icon, value, colorClass, title, children }: any) => (
       <div className="space-y-2">
@@ -226,34 +208,36 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
       </div>
     );
 
+    const chipClass = "px-2.5 py-1 rounded-full bg-white border border-amber-200 text-[11px] font-bold text-[#3d200a]";
+
     return (
       <div className="p-5 bg-white rounded-xl border border-[#8a5d33]/10 shadow-sm space-y-6">
         {/* Core Vitals */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Item 
             label="Certificate Validity" 
-            icon={sa?.certificate_valid ? CheckCircle2 : AlertTriangle} 
-            colorClass={sa?.certificate_valid ? "text-emerald-500" : "text-red-500"} 
-            value={sa?.certificate_valid ? "Valid" : "Invalid"} 
+            icon={summary.certificateValid === false ? AlertTriangle : CheckCircle2} 
+            colorClass={summary.certificateValid === false ? "text-red-500" : "text-emerald-500"} 
+            value={summary.certificateValid === false ? "Invalid" : "Valid"} 
           />
           <Item 
             label="TLS Protocol" 
             icon={Lock} 
             colorClass="text-blue-500" 
-            value={conn?.protocol?.version || "Unknown"} 
+            value={summary.primaryTlsVersion || "Unknown"} 
           />
           <Item 
             label="Expiry" 
             icon={Calendar} 
-            colorClass={cert?.validity?.days_remaining && cert.validity.days_remaining > 30 ? "text-emerald-500" : "text-amber-500"} 
-            value={cert?.validity?.days_remaining ? `${cert.validity.days_remaining} days` : "Unknown"} 
+            colorClass={summary.daysRemaining !== null && summary.daysRemaining > 30 ? "text-emerald-500" : "text-amber-500"} 
+            value={summary.daysRemaining !== null ? `${summary.daysRemaining} days` : "Unknown"} 
           />
           <Item 
-            label="Cipher Suite" 
+            label="Preferred Cipher" 
             icon={ShieldCheck} 
-            colorClass={sa?.strong_cipher ? "text-emerald-500" : "text-amber-500"} 
-            title={conn?.protocol?.cipher_suite?.name}
-            value={conn?.protocol?.cipher_suite?.name || "Unknown"} 
+            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"} 
+            title={summary.preferredCipher || undefined}
+            value={summary.preferredCipher || "Unknown"} 
           />
         </div>
 
@@ -265,15 +249,15 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
             label="Subject (Common Name)" 
             icon={Globe} 
             colorClass="text-indigo-500" 
-            title={cert?.subject?.common_name}
-            value={cert?.subject?.common_name || "Unknown"} 
+            title={summary.subjectCommonName || undefined}
+            value={summary.subjectCommonName || "Unknown"} 
           />
           <Item 
             label="Issuer Authority" 
             icon={Server} 
             colorClass="text-indigo-500" 
-            title={cert?.issuer?.common_name}
-            value={cert?.issuer?.common_name || "Unknown"} 
+            title={summary.issuerCommonName || undefined}
+            value={summary.issuerCommonName || "Unknown"} 
           />
           <Item 
             label="Subject Alt Names" 
@@ -288,10 +272,10 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
             )}
           </Item>
           <Item 
-            label="Trust Level" 
-            icon={sa?.self_signed_cert ? AlertTriangle : CheckCircle2} 
-            colorClass={sa?.self_signed_cert ? "text-amber-500" : "text-emerald-500"} 
-            value={sa?.self_signed_cert ? "Self-Signed" : "Trusted CA"} 
+            label="Negotiated Group" 
+            icon={Lock} 
+            colorClass="text-indigo-500" 
+            value={summary.negotiatedGroup || "Not reported"} 
           />
         </div>
 
@@ -301,29 +285,122 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Item 
             label="Public Key Size" 
-            icon={sa?.key_size_adequate ? CheckCircle2 : AlertTriangle} 
-            colorClass={sa?.key_size_adequate ? "text-emerald-500" : "text-amber-500"} 
-            value={`${cert?.public_key?.algorithm} (${cert?.public_key?.size} bits)`} 
+            icon={summary.keySizeAdequate === false ? AlertTriangle : CheckCircle2} 
+            colorClass={summary.keySizeAdequate === false ? "text-amber-500" : "text-emerald-500"} 
+            value={summary.publicKeyAlgorithm && summary.publicKeyBits ? `${summary.publicKeyAlgorithm} (${summary.publicKeyBits} bits)` : "Unknown"} 
           />
           <Item 
             label="Signature Algorithm" 
             icon={Zap} 
             colorClass="text-blue-500" 
-            value={cert?.signature_algorithm?.name || "Unknown"} 
+            value={summary.signatureAlgorithm || "Unknown"} 
           />
           <Item 
             label="Strong Cipher" 
-            icon={sa?.strong_cipher ? CheckCircle2 : AlertTriangle} 
-            colorClass={sa?.strong_cipher ? "text-emerald-500" : "text-amber-500"} 
-            value={sa?.strong_cipher ? "Yes" : "No"} 
+            icon={summary.strongCipher === false ? AlertTriangle : CheckCircle2} 
+            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"} 
+            value={summary.strongCipher === false ? "No" : "Yes"} 
           />
           <Item 
             label="TLS Downgrade Safe" 
-            icon={sa?.tls_version_secure ? CheckCircle2 : AlertTriangle} 
-            colorClass={sa?.tls_version_secure ? "text-emerald-500" : "text-amber-500"} 
-            value={sa?.tls_version_secure ? "Yes" : "Weak TLS allowed"} 
+            icon={summary.tlsVersionSecure === false ? AlertTriangle : CheckCircle2} 
+            colorClass={summary.tlsVersionSecure === false ? "text-amber-500" : "text-emerald-500"} 
+            value={summary.tlsVersionSecure === false ? "Weak TLS allowed" : "Yes"} 
           />
         </div>
+
+        <div className="h-px w-full bg-[#8a5d33]/5"></div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="rounded-2xl border border-amber-200/70 bg-[#fdf8f0]/70 p-4 space-y-3">
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest">Supported TLS Versions</p>
+            <div className="flex flex-wrap gap-2">
+              {summary.supportedTlsVersions.length > 0 ? (
+                summary.supportedTlsVersions.map((version) => (
+                  <span key={version} className={chipClass}>{version}</span>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No supported versions reported</span>
+              )}
+            </div>
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest pt-2">Active Version Cipher Order</p>
+            <div className="space-y-2">
+              {activeProbe?.accepted_ciphers_in_client_offer_order?.length ? (
+                activeProbe.accepted_ciphers_in_client_offer_order.slice(0, 6).map((cipher, index) => (
+                  <div key={cipher} className="flex items-center gap-3 text-sm font-semibold text-[#3d200a]">
+                    <span className="w-6 h-6 rounded-full bg-white border border-amber-200 flex items-center justify-center text-[11px] font-extrabold text-[#8B0000]">{index + 1}</span>
+                    <span className="break-all">{cipher}</span>
+                  </div>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No per-version cipher order reported</span>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200/70 bg-[#fdf8f0]/70 p-4 space-y-3">
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest">Key Exchange & Groups</p>
+            <div className="flex flex-wrap gap-2">
+              {summary.keyExchangeAlgorithms.length > 0 ? (
+                summary.keyExchangeAlgorithms.map((algorithm) => (
+                  <span key={algorithm} className={chipClass}>{algorithm}</span>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No key exchange algorithms reported</span>
+              )}
+            </div>
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest pt-2">Queried Groups</p>
+            <div className="flex flex-wrap gap-2">
+              {summary.queriedGroups.length > 0 ? (
+                summary.queriedGroups.map((group) => (
+                  <span key={group} className={chipClass}>{group}</span>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No queried groups reported</span>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200/70 bg-[#fdf8f0]/70 p-4 space-y-3">
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest">Supported Groups</p>
+            <div className="flex flex-wrap gap-2">
+              {summary.supportedGroups.length > 0 ? (
+                summary.supportedGroups.map((group) => (
+                  <span key={group} className={chipClass}>{group}</span>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No supported groups reported</span>
+              )}
+            </div>
+            <p className="text-[10px] font-bold text-[#8a5d33]/60 uppercase tracking-widest pt-2">Global Cipher Preference</p>
+            <div className="space-y-2">
+              {summary.cipherPreferenceOrder.length > 0 ? (
+                summary.cipherPreferenceOrder.slice(0, 8).map((cipher, index) => (
+                  <div key={cipher} className="flex items-center gap-3 text-sm font-semibold text-[#3d200a]">
+                    <span className="w-6 h-6 rounded-full bg-white border border-amber-200 flex items-center justify-center text-[11px] font-extrabold text-[#8B0000]">{index + 1}</span>
+                    <span className="break-all">{cipher}</span>
+                  </div>
+                ))
+              ) : (
+                <span className="text-sm font-semibold text-[#8a5d33]/60">No cipher preference data reported</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {summary.warnings.length > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-[10px] font-bold text-amber-800/60 uppercase tracking-widest mb-3">Analysis Warnings</p>
+            <div className="space-y-2">
+              {summary.warnings.map((warning) => (
+                <div key={warning} className="flex items-start gap-2 text-sm font-semibold text-amber-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{warning}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
       </div>
     );
@@ -340,9 +417,9 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
               <ShieldCheck className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-2xl font-black text-[#3d200a] tracking-tight">SSL / TLS Scanning</h2>
+              <h2 className="text-2xl font-black text-[#3d200a] tracking-tight">OpenSSL TLS Scanning</h2>
               <p className="text-sm font-medium text-[#8a5d33]/80 mt-1 max-w-xl leading-relaxed">
-                Analyze and monitor cryptographic certificates and TLS connection security across your domains.
+                Deep-profile your domains with OpenSSL to inspect certificates, negotiated groups, and target cipher preference order.
               </p>
             </div>
           </div>
@@ -357,16 +434,23 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
               </Link>
                <button
                   onClick={handleScanAll}
-                  disabled={scanQueue.length > 0 || activeScans > 0}
+                  disabled={isFullScanActive}
                   className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] text-white text-sm font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none cursor-pointer"
                >
-                  {scanQueue.length > 0 || activeScans > 0 ? (
+                  {isFullScanActive ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Zap className="w-4 h-4" />
                   )}
-                  {scanQueue.length > 0 || activeScans > 0 ? `Scanning (${scanQueue.length + activeScans} left)` : "Scan All Domains"}
+                  {isFullScanActive
+                    ? `Full Scan Running (${runningTasks.length + queuedTasks.length} left)`
+                    : "Scan All Domains"}
                </button>
+               {fullScan && (
+                 <p className="text-[11px] font-bold text-[#8a5d33]/65">
+                   Batch started {formatDistanceToNow(new Date(fullScan.createdAt), { addSuffix: true })}
+                 </p>
+               )}
             </div>
           )}
         </div>
@@ -442,8 +526,9 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
           </div>
         ) : (
           filteredAssets.map((asset) => {
-            const isQueued = scanQueue.includes(asset.id);
-            const isRunning = asset.latestScan?.status === "pending";
+            const task = activeTaskByAsset.get(asset.id);
+            const isQueued = task?.status === "queued";
+            const isRunning = task?.status === "running" || asset.latestScan?.status === "pending" || asset.scanStatus === "scanning";
             const isExpanded = expandedAssetId === asset.id;
 
             return (
@@ -469,18 +554,21 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
                         {asset.latestScan ? (
                            <>
                              <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                               asset.latestScan.status === 'completed' ? 'text-emerald-500' :
-                               asset.latestScan.status === 'pending' ? 'text-amber-500 animate-pulse' : 'text-red-500'
+                               isQueued ? 'text-slate-500' :
+                               isRunning ? 'text-amber-500 animate-pulse' :
+                               asset.latestScan.status === 'completed' ? 'text-emerald-500' : 'text-red-500'
                              }`}>
-                               {asset.latestScan.status}
+                               {isQueued ? 'queued' : isRunning ? 'running' : asset.latestScan.status}
                              </span>
                              <span className="w-1 h-1 rounded-full bg-[#8a5d33]/20"></span>
                              <span className="text-[10px] font-bold text-[#8a5d33]/50">
-                               {formatDistanceToNow(new Date(asset.latestScan.createdAt), { addSuffix: true })}
+                               {formatDistanceToNow(new Date((task?.createdAt || asset.latestScan.createdAt)), { addSuffix: true })}
                              </span>
                            </>
                         ) : (
-                           <span className="text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider">Not Scanned Yet</span>
+                           <span className="text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider">
+                             {isQueued ? "Queued" : isRunning ? "Running" : "Not Scanned Yet"}
+                           </span>
                         )}
                       </div>
                     </div>
@@ -505,7 +593,7 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
                         ) : (
                            <Zap className="w-3.5 h-3.5" />
                         )}
-                        {isRunning ? 'Scanning' : isQueued ? 'Queued' : 'Scan SSL'}
+                        {isRunning ? 'Scanning' : isQueued ? 'Queued' : 'Scan TLS'}
                       </button>
                     )}
                     <button className="p-1.5 text-[#8a5d33]/40 hover:text-[#8a5d33] transition-colors">
@@ -515,10 +603,37 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
                 </div>
 
                 {/* Expanded State */}
-                {isExpanded && asset.latestScan && (
+                {isExpanded && (
                   <div className="p-4 pt-0 border-t border-amber-500/10 mt-2 bg-linear-to-b from-transparent to-[#fdf8f0]/40">
                      <div className="pt-4">
-                       {renderScanDetails(asset.latestScan)}
+                       {isQueued ? (
+                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-3">
+                           <Clock className="w-5 h-5 text-slate-500 shrink-0" />
+                           <p className="text-sm font-semibold text-slate-700">
+                             This scan is queued and will start as soon as a worker slot becomes free.
+                           </p>
+                         </div>
+                       ) : isRunning ? (
+                         <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
+                           <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+                           <div>
+                             <p className="text-sm font-semibold text-amber-700">OpenSSL TLS scan currently running...</p>
+                             {asset.latestScan?.status === "completed" && (
+                               <p className="mt-1 text-xs font-semibold text-amber-700/80">
+                                 Previous completed result remains available on the asset details page while this refresh runs.
+                               </p>
+                             )}
+                           </div>
+                         </div>
+                       ) : asset.latestScan ? (
+                         renderScanDetails(asset.latestScan)
+                       ) : (
+                         <div className="p-4 bg-white rounded-xl border border-amber-200/60">
+                           <p className="text-sm font-semibold text-[#8a5d33]/70">
+                             No completed scan is available yet for this asset.
+                           </p>
+                         </div>
+                       )}
                      </div>
                   </div>
                 )}

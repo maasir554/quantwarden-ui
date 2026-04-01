@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
+import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 
 export async function GET(req: NextRequest) {
   try {
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
        FROM "asset_scan" s
        JOIN "asset" a ON a.id = s."assetId"
        WHERE a."organizationId" = $1 
-         AND s.type = 'pyssl' 
+         AND s.type = 'openssl' 
          AND s.status = 'completed'
          AND s."completedAt" >= NOW() - INTERVAL '${days} days'
        ORDER BY s."completedAt" DESC`,
@@ -58,10 +59,10 @@ export async function GET(req: NextRequest) {
     const latestScansMap = new Map();
     for (const row of scanRows) {
       if (!latestScansMap.has(row.assetId)) {
-         try {
-           const parsed = typeof row.resultData === 'string' ? JSON.parse(row.resultData) : row.resultData;
+         const parsed = parseOpenSSLScanResult(row.resultData);
+         if (parsed.summary) {
            latestScansMap.set(row.assetId, { ...row, parsed });
-         } catch(e) {}
+         }
       }
     }
     const latestScans = Array.from(latestScansMap.values());
@@ -84,11 +85,13 @@ export async function GET(req: NextRequest) {
 
     for (const scan of latestScans) {
        const p = scan.parsed;
-       if (!p) continue;
+       if (!p?.summary) continue;
+
+       const summary = p.summary;
 
        // Validity Processing
-       const daysRem = p.certificate?.validity?.days_remaining;
-       const isValid = p.security_analysis?.certificate_valid;
+       const daysRem = summary.daysRemaining;
+       const isValid = summary.certificateValid;
        
        let isRisk = false;
        let issue = "";
@@ -127,28 +130,26 @@ export async function GET(req: NextRequest) {
        }
 
        // TLS
-       const tls = p.connection_info?.protocol?.version;
+       const tls = summary.primaryTlsVersion;
        if (tls) tlsVersions[tls] = (tlsVersions[tls] || 0) + 1;
 
        // Algorithms
-       const cname = p.connection_info?.protocol?.cipher_suite?.name;
+       const cname = summary.preferredCipher;
        if (cname) algorithms[cname] = (algorithms[cname] || 0) + 1;
 
        // Key sizes
-       const ks = p.certificate?.public_key?.size;
-       const kalg = p.certificate?.public_key?.algorithm || "Unknown";
+       const ks = summary.publicKeyBits;
+       const kalg = summary.publicKeyAlgorithm || "Unknown";
        if (ks) {
           const keyName = `${kalg} ${ks}-bit`;
           keySizes[keyName] = (keySizes[keyName] || 0) + 1;
        }
 
        // Security analysis
-       const sa = p.security_analysis;
-       if (sa) {
-         if (sa.strong_cipher) strongCipherCount++; else weakCipherCount++;
-         if (sa.self_signed_cert) selfSignedCount++;
-         if (sa.tls_version_secure === false) tlsDowngradeVulnerable++;
-       }
+       if (summary.strongCipher === true) strongCipherCount++;
+       if (summary.strongCipher === false) weakCipherCount++;
+       if (summary.selfSignedCert === true) selfSignedCount++;
+       if (summary.tlsVersionSecure === false) tlsDowngradeVulnerable++;
     }
 
     const tlsChartData = Object.entries(tlsVersions).map(([name, value]) => ({ name, value }));

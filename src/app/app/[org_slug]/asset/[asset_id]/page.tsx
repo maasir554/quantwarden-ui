@@ -46,7 +46,7 @@ export default async function AssetIntelligencePage({ params }: { params: Promis
   const asset = assetRows[0];
 
   const scanRows = await prisma.$queryRawUnsafe<any[]>(
-     `SELECT * FROM "asset_scan" WHERE "assetId" = $1 ORDER BY "completedAt" DESC`,
+     `SELECT * FROM "asset_scan" WHERE "assetId" = $1 AND type = 'openssl' ORDER BY "createdAt" DESC`,
      asset.id
   );
 
