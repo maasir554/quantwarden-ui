@@ -220,6 +220,8 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
           data,
           loading: false,
           error: null,
+          serviceUnavailableRemainingSeconds: previous.serviceUnavailableRemainingSeconds,
+          checkingConnection: previous.checkingConnection,
           orgSlug: subscription?.orgSlug || previous.orgSlug,
           lastSyncAt: syncedAt,
           connected: previous.connected,
