@@ -84,6 +84,9 @@ export interface OpenSSLProfileResponse {
 }
 
 export interface OpenSSLDerivedSummary {
+  scanState: "reachable" | "dns_missing";
+  dnsMissing: boolean;
+  dnsStatusLabel: string | null;
   certificateValid: boolean | null;
   tlsVersionSecure: boolean | null;
   strongCipher: boolean | null;
@@ -209,6 +212,12 @@ function isTlsVersionSecure(probes: OpenSSLVersionProbe[]): boolean | null {
 export function deriveOpenSSLScanSummary(payload: OpenSSLProfileResponse): OpenSSLDerivedSummary {
   const primaryProbe = getPrimaryProbe(payload.tls_versions || []);
   const certificate = payload.certificate || {};
+  const supportedProbeCount = (payload.tls_versions || []).filter((probe) => probe.supported).length;
+  const dnsMissing =
+    payload.resolved_ip === null &&
+    supportedProbeCount === 0 &&
+    !certificate.subject &&
+    !certificate.not_after;
   const subjectCommonName = getCommonName(certificate.subject_attributes, certificate.subject);
   const issuerCommonName = getCommonName(certificate.issuer_attributes, certificate.issuer);
   const expiryDate = certificate.not_after || null;
@@ -232,6 +241,7 @@ export function deriveOpenSSLScanSummary(payload: OpenSSLProfileResponse): OpenS
     .map((probe) => probe.negotiated_protocol || probe.tls_version);
 
   const warnings: string[] = [];
+  if (dnsMissing) warnings.push("This domain no longer resolves in DNS.");
   if (certificateValid === false) warnings.push("Certificate is expired or outside its validity window.");
   if (daysRemaining !== null && daysRemaining > 0 && daysRemaining <= 30) warnings.push(`Certificate expires in ${daysRemaining} days.`);
   if (selfSignedCert) warnings.push("Certificate appears to be self-signed.");
@@ -240,6 +250,9 @@ export function deriveOpenSSLScanSummary(payload: OpenSSLProfileResponse): OpenS
   if (strongCipher === false) warnings.push("Preferred cipher selection is not considered strong.");
 
   return {
+    scanState: dnsMissing ? "dns_missing" : "reachable",
+    dnsMissing,
+    dnsStatusLabel: dnsMissing ? "DNS Expired" : null,
     certificateValid,
     tlsVersionSecure,
     strongCipher,

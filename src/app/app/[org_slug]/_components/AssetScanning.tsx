@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
+  Check,
   Search,
   Loader2,
   ShieldCheck,
@@ -24,12 +25,13 @@ import { useScanActivity } from "@/components/scan-activity-provider";
 interface AssetScanningProps {
   org: any;
   isAdmin: boolean;
+  canScan: boolean;
 }
 
 interface ScanData {
   id: string;
   type: string;
-  status: "pending" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed";
   resultData: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -43,24 +45,36 @@ interface ScandAsset {
   parentId: string | null;
   scanStatus?: string | null;
   latestScan: ScanData | null;
+  latestSuccessfulScan?: ScanData | null;
 }
 
-export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
+export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningProps) {
   const [assets, setAssets] = useState<ScandAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "successful" | "failed" | "unscanned">("all");
+  const [filterType, setFilterType] = useState<"all" | "successful" | "failed" | "dnsExpired" | "unscanned">("all");
   const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isStoppingBatch, setIsStoppingBatch] = useState(false);
+  const activitySnapshotRef = useRef<{
+    activeCount: number;
+    latestCompletedBatchId: string | null;
+    progressSignature: string;
+  } | null>(null);
+  const initialActivityCheckDoneRef = useRef(false);
   const {
     hydrated,
-    stateVersion,
-    runningTasks,
-    queuedTasks,
-    fullScan,
-    isFullScanActive,
-    queueAssetScan,
-    queueFullScan,
-  } = useScanActivity(org.id);
+    connected,
+    activity,
+    createBatch,
+    cancelBatch,
+    checkForActiveScans,
+    pendingBatchType,
+    cancellingBatchId,
+  } = useScanActivity(org.id, {
+    orgSlug: org.slug,
+  });
 
   const fetchAssets = useCallback(async () => {
     try {
@@ -81,51 +95,160 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
   }, [fetchAssets]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    fetchAssets();
-  }, [hydrated, stateVersion, fetchAssets]);
+    if (!hydrated || initialActivityCheckDoneRef.current) return;
+    initialActivityCheckDoneRef.current = true;
+    void checkForActiveScans({
+      showIdleToast: true,
+      startStreamOnActive: true,
+    });
+  }, [checkForActiveScans, hydrated]);
 
   useEffect(() => {
-    if (!hydrated || (runningTasks.length === 0 && queuedTasks.length === 0)) return;
+    if (!hydrated || connected || !activity?.activeBatches.length) return;
     const interval = window.setInterval(() => {
       void fetchAssets();
-    }, 4000);
+    }, 30000);
     return () => window.clearInterval(interval);
-  }, [fetchAssets, hydrated, queuedTasks.length, runningTasks.length]);
+  }, [activity?.activeBatches.length, connected, fetchAssets, hydrated]);
 
-  const handleScan = (assetId: string) => {
-    const asset = assets.find((item) => item.id === assetId);
-    if (!asset) return;
-    queueAssetScan({
-      orgId: org.id,
-      orgSlug: org.slug,
-      assetId,
-      assetValue: asset.value,
+  useEffect(() => {
+    if (!hydrated || !activity) return;
+
+    const progressSignature = (activity.activeBatches || [])
+      .map((batch) => [
+        batch.id,
+        batch.status,
+        batch.completedAssets,
+        batch.failedAssets,
+        batch.pendingAssets,
+        batch.runningAssets,
+        batch.percentComplete,
+      ].join(":"))
+      .join("|");
+
+    const nextSnapshot = {
+      activeCount: activity.activeBatches.length,
+      latestCompletedBatchId: activity.latestCompletedBatch?.id || null,
+      progressSignature,
+    };
+    const previousSnapshot = activitySnapshotRef.current;
+    activitySnapshotRef.current = nextSnapshot;
+
+    if (!previousSnapshot) return;
+
+    if (
+      previousSnapshot.activeCount !== nextSnapshot.activeCount ||
+      previousSnapshot.latestCompletedBatchId !== nextSnapshot.latestCompletedBatchId ||
+      previousSnapshot.progressSignature !== nextSnapshot.progressSignature
+    ) {
+      void fetchAssets();
+    }
+  }, [activity, fetchAssets, hydrated]);
+
+  const handleScan = async (assetId: string) => {
+    setActionError(null);
+    const result = await createBatch({
+      type: "single",
+      assetIds: [assetId],
     });
+
+    if (!result.ok) {
+      setActionError(result.error || "Failed to queue scan.");
+    } else {
+      void fetchAssets();
+    }
   };
 
-  const handleScanAll = () => {
-    const scanableAssets = assets
-      .filter((a) => a.type === "domain")
-      .filter((a) => !a.latestScan || a.latestScan.status !== "pending")
-      .map((a) => ({ id: a.id, value: a.value }));
+  const handleScanAll = async () => {
+    setActionError(null);
+    const scanableAssetIds = assets
+      .filter((asset) => asset.type === "domain")
+      .map((asset) => asset.id);
 
-    queueFullScan({
-      orgId: org.id,
-      orgSlug: org.slug,
-      assets: scanableAssets,
+    const result = await createBatch({
+      type: "full",
+      assetIds: scanableAssetIds,
     });
+
+    if (!result.ok) {
+      setActionError(result.error || "Failed to start full scan.");
+    } else {
+      setSelectedAssetIds([]);
+      void fetchAssets();
+    }
+  };
+
+  const handleGroupScan = async () => {
+    setActionError(null);
+    const result = await createBatch({
+      type: "group",
+      assetIds: selectedAssetIds,
+    });
+
+    if (!result.ok) {
+      setActionError(result.error || "Failed to start group scan.");
+    } else {
+      setSelectedAssetIds([]);
+      void fetchAssets();
+    }
+  };
+
+  const handleStopBatch = async (batchId: string) => {
+    setActionError(null);
+    setIsStoppingBatch(true);
+
+    try {
+      const result = await cancelBatch(batchId);
+      if (!result.ok) {
+        setActionError(result.error || "Failed to stop the active scan batch.");
+      } else {
+        setSelectedAssetIds([]);
+        void fetchAssets();
+      }
+    } finally {
+      setIsStoppingBatch(false);
+    }
+  };
+
+  const toggleAssetSelection = (assetId: string) => {
+    setSelectedAssetIds((previous) =>
+      previous.includes(assetId)
+        ? previous.filter((id) => id !== assetId)
+        : [...previous, assetId]
+    );
   };
 
   const activeTaskByAsset = new Map(
-    [...runningTasks, ...queuedTasks].map((task) => [task.assetId, task])
+    (activity?.activeBatches || [])
+      .flatMap((batch) =>
+        batch.items
+          .filter((item) => item.status === "pending" || item.status === "running")
+          .map((item) => [
+            item.assetId,
+            { status: item.status, batchType: batch.type, createdAt: item.createdAt },
+          ] as const)
+      )
   );
 
-  const domainAssets = assets.filter(a => a.type === "domain");
+  const fullScan = activity?.activeBatches.find((batch) => batch.type === "full") || null;
+  const groupScan = activity?.activeBatches.find((batch) => batch.type === "group") || null;
+  const activeBatch = activity?.activeBatches[0] || null;
+  const isFullScanActive = Boolean(fullScan);
+  const isCreatingFullScan = pendingBatchType === "full";
+  const isCreatingGroupScan = pendingBatchType === "group";
+  const isCreatingAnyBatch = pendingBatchType !== null;
+  const isStoppingActiveBatch = Boolean(activeBatch && cancellingBatchId === activeBatch.id) || isStoppingBatch;
+  const orgScanLocked = Boolean(activity?.lock.active);
+  const lockMessage = activity?.lock.active
+    ? `${activity.lock.message} Started by ${activity.lock.initiatedBy?.name || activity.lock.initiatedBy?.email || "Unknown"} ${formatDistanceToNow(new Date(activity.lock.initiatedAt || new Date().toISOString()), { addSuffix: true })}.`
+    : null;
+
+  const domainAssets = assets.filter((a) => a.type === "domain");
   const totalDiscovered = domainAssets.length;
-  const unscanned = domainAssets.filter(a => !a.latestScan && !activeTaskByAsset.has(a.id)).length;
+  const unscanned = domainAssets.filter((a) => !a.latestScan && !activeTaskByAsset.has(a.id)).length;
+  const dnsExpired = domainAssets.filter((asset) => asset.scanStatus === "expired").length;
   const scanFailed = domainAssets.filter((asset) => asset.latestScan?.status === "failed").length;
-  const scanSuccessful = domainAssets.filter((asset) => asset.latestScan?.status === "completed").length;
+  const scanSuccessful = domainAssets.filter((asset) => asset.latestScan?.status === "completed" && asset.scanStatus !== "expired").length;
 
   let filteredAssets = domainAssets.filter(
     (a) => a.value.toLowerCase().includes(searchTerm.toLowerCase())
@@ -135,12 +258,26 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
     filteredAssets = filteredAssets.filter((asset) => asset.latestScan?.status === "completed");
   } else if (filterType === "failed") {
     filteredAssets = filteredAssets.filter((asset) => asset.latestScan?.status === "failed");
+  } else if (filterType === "dnsExpired") {
+    filteredAssets = filteredAssets.filter((asset) => asset.scanStatus === "expired");
   } else if (filterType === "unscanned") {
     filteredAssets = filteredAssets.filter((asset) => !asset.latestScan && !activeTaskByAsset.has(asset.id));
   }
 
+  const filteredAssetIdKey = filteredAssets.map((asset) => asset.id).join("|");
+
+  useEffect(() => {
+    const validIds = new Set(filteredAssets.map((asset) => asset.id));
+    setSelectedAssetIds((previous) => {
+      const next = previous.filter((assetId) => validIds.has(assetId));
+      return next.length === previous.length && next.every((assetId, index) => assetId === previous[index])
+        ? previous
+        : next;
+    });
+  }, [filteredAssetIdKey, filteredAssets]);
+
   const renderScanDetails = (scan: ScanData) => {
-    if (scan.status === "pending") {
+    if (scan.status === "pending" || scan.status === "running") {
       return (
         <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
           <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
@@ -157,7 +294,7 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
           if (parsed.detail) errMsg = parsed.detail;
           else if (parsed.error) errMsg = parsed.error;
           else if (typeof parsed === "string") errMsg = parsed;
-        } catch (e) {}
+        } catch {}
       }
 
       return (
@@ -212,58 +349,64 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
 
     return (
       <div className="p-5 bg-white rounded-xl border border-[#8a5d33]/10 shadow-sm space-y-6">
-        {/* Core Vitals */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Item 
-            label="Certificate Validity" 
-            icon={summary.certificateValid === false ? AlertTriangle : CheckCircle2} 
-            colorClass={summary.certificateValid === false ? "text-red-500" : "text-emerald-500"} 
-            value={summary.certificateValid === false ? "Invalid" : "Valid"} 
+          <Item
+            label="Certificate Validity"
+            icon={summary.dnsMissing || summary.certificateValid === false ? AlertTriangle : CheckCircle2}
+            colorClass={summary.dnsMissing || summary.certificateValid === false ? "text-red-500" : "text-emerald-500"}
+            value={
+              summary.dnsMissing
+                ? "Unavailable"
+                : summary.certificateValid === false
+                  ? "Invalid"
+                  : summary.certificateValid === true
+                    ? "Valid"
+                    : "Unknown"
+            }
           />
-          <Item 
-            label="TLS Protocol" 
-            icon={Lock} 
-            colorClass="text-blue-500" 
-            value={summary.primaryTlsVersion || "Unknown"} 
+          <Item
+            label="TLS Protocol"
+            icon={Lock}
+            colorClass="text-blue-500"
+            value={summary.primaryTlsVersion || "Unknown"}
           />
-          <Item 
-            label="Expiry" 
-            icon={Calendar} 
-            colorClass={summary.daysRemaining !== null && summary.daysRemaining > 30 ? "text-emerald-500" : "text-amber-500"} 
-            value={summary.daysRemaining !== null ? `${summary.daysRemaining} days` : "Unknown"} 
+          <Item
+            label="Expiry"
+            icon={Calendar}
+            colorClass={summary.dnsMissing ? "text-red-500" : summary.daysRemaining !== null && summary.daysRemaining > 30 ? "text-emerald-500" : "text-amber-500"}
+            value={summary.dnsMissing ? "DNS Expired" : summary.daysRemaining !== null ? `${summary.daysRemaining} days` : "Unknown"}
           />
-          <Item 
-            label="Preferred Cipher" 
-            icon={ShieldCheck} 
-            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"} 
+          <Item
+            label="Preferred Cipher"
+            icon={ShieldCheck}
+            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"}
             title={summary.preferredCipher || undefined}
-            value={summary.preferredCipher || "Unknown"} 
+            value={summary.preferredCipher || "Unknown"}
           />
         </div>
 
         <div className="h-px w-full bg-[#8a5d33]/5"></div>
 
-        {/* Identity & Trust */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Item 
-            label="Subject (Common Name)" 
-            icon={Globe} 
-            colorClass="text-indigo-500" 
+          <Item
+            label="Subject (Common Name)"
+            icon={Globe}
+            colorClass="text-indigo-500"
             title={summary.subjectCommonName || undefined}
-            value={summary.subjectCommonName || "Unknown"} 
+            value={summary.subjectCommonName || "Unknown"}
           />
-          <Item 
-            label="Issuer Authority" 
-            icon={Server} 
-            colorClass="text-indigo-500" 
+          <Item
+            label="Issuer Authority"
+            icon={Server}
+            colorClass="text-indigo-500"
             title={summary.issuerCommonName || undefined}
-            value={summary.issuerCommonName || "Unknown"} 
+            value={summary.issuerCommonName || "Unknown"}
           />
-          <Item 
-            label="Subject Alt Names" 
-            icon={Globe} 
-            colorClass="text-blue-500" 
-            value={`${sans.length} domains`} 
+          <Item
+            label="Subject Alt Names"
+            icon={Globe}
+            colorClass="text-blue-500"
+            value={`${sans.length} domains`}
           >
             {sans.length > 0 && (
               <div className="absolute z-50 top-full left-0 mt-2 hidden group-hover:block w-72 bg-[#3d200a] text-white text-xs p-3 rounded-xl shadow-xl max-h-48 overflow-y-auto ring-1 ring-white/10 break-all leading-tight">
@@ -271,41 +414,40 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
               </div>
             )}
           </Item>
-          <Item 
-            label="Negotiated Group" 
-            icon={Lock} 
-            colorClass="text-indigo-500" 
-            value={summary.negotiatedGroup || "Not reported"} 
+          <Item
+            label="Negotiated Group"
+            icon={Lock}
+            colorClass="text-indigo-500"
+            value={summary.negotiatedGroup || "Not reported"}
           />
         </div>
 
         <div className="h-px w-full bg-[#8a5d33]/5"></div>
 
-        {/* Cryptography */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Item 
-            label="Public Key Size" 
-            icon={summary.keySizeAdequate === false ? AlertTriangle : CheckCircle2} 
-            colorClass={summary.keySizeAdequate === false ? "text-amber-500" : "text-emerald-500"} 
-            value={summary.publicKeyAlgorithm && summary.publicKeyBits ? `${summary.publicKeyAlgorithm} (${summary.publicKeyBits} bits)` : "Unknown"} 
+          <Item
+            label="Public Key Size"
+            icon={summary.keySizeAdequate === false ? AlertTriangle : CheckCircle2}
+            colorClass={summary.keySizeAdequate === false ? "text-amber-500" : "text-emerald-500"}
+            value={summary.publicKeyAlgorithm && summary.publicKeyBits ? `${summary.publicKeyAlgorithm} (${summary.publicKeyBits} bits)` : "Unknown"}
           />
-          <Item 
-            label="Signature Algorithm" 
-            icon={Zap} 
-            colorClass="text-blue-500" 
-            value={summary.signatureAlgorithm || "Unknown"} 
+          <Item
+            label="Signature Algorithm"
+            icon={Zap}
+            colorClass="text-blue-500"
+            value={summary.signatureAlgorithm || "Unknown"}
           />
-          <Item 
-            label="Strong Cipher" 
-            icon={summary.strongCipher === false ? AlertTriangle : CheckCircle2} 
-            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"} 
-            value={summary.strongCipher === false ? "No" : "Yes"} 
+          <Item
+            label="Strong Cipher"
+            icon={summary.strongCipher === false ? AlertTriangle : CheckCircle2}
+            colorClass={summary.strongCipher === false ? "text-amber-500" : "text-emerald-500"}
+            value={summary.strongCipher === false ? "No" : "Yes"}
           />
-          <Item 
-            label="TLS Downgrade Safe" 
-            icon={summary.tlsVersionSecure === false ? AlertTriangle : CheckCircle2} 
-            colorClass={summary.tlsVersionSecure === false ? "text-amber-500" : "text-emerald-500"} 
-            value={summary.tlsVersionSecure === false ? "Weak TLS allowed" : "Yes"} 
+          <Item
+            label="TLS Downgrade Safe"
+            icon={summary.tlsVersionSecure === false ? AlertTriangle : CheckCircle2}
+            colorClass={summary.tlsVersionSecure === false ? "text-amber-500" : "text-emerald-500"}
+            value={summary.tlsVersionSecure === false ? "Weak TLS allowed" : "Yes"}
           />
         </div>
 
@@ -402,16 +544,27 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
           </div>
         )}
 
+        {summary.dnsMissing && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-red-500" />
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">DNS Expired</p>
+                <p className="mt-1 text-sm font-semibold text-red-700">
+                  The domain no longer resolves in DNS. This is different from an OpenSSL request failure.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
   return (
     <div className="h-full flex flex-col bg-white/40 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl overflow-hidden ring-1 ring-amber-500/20">
-      
-      {/* Header */}
       <div className="p-6 sm:p-8 bg-linear-to-br from-white/80 to-white/40 border-b border-amber-500/10 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+        <div className="flex flex-col gap-6">
           <div className="flex items-start gap-4">
             <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-[#8B0000] to-red-600 flex items-center justify-center shrink-0 shadow-lg shadow-red-900/20">
               <ShieldCheck className="w-6 h-6 text-white" />
@@ -421,42 +574,96 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
               <p className="text-sm font-medium text-[#8a5d33]/80 mt-1 max-w-xl leading-relaxed">
                 Deep-profile your domains with OpenSSL to inspect certificates, negotiated groups, and target cipher preference order.
               </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {isAdmin && (
+                  <Link
+                    href={`/app/${org.slug}/explore`}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/70 border border-[#8B0000]/20 text-[#8B0000] text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-white transition-colors"
+                  >
+                    Open Explorer
+                  </Link>
+                )}
+                {canScan && (
+                  <>
+                  {connected && activeBatch && (
+                    <button
+                      onClick={() => void handleStopBatch(activeBatch.id)}
+                      disabled={isStoppingActiveBatch}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-red-50 border border-red-200 text-red-700 text-sm font-bold rounded-xl hover:bg-red-100 transition-all disabled:opacity-50"
+                    >
+                      {isStoppingActiveBatch ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4" />
+                      )}
+                      Stop Active Scan
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void handleGroupScan()}
+                    disabled={orgScanLocked || isCreatingAnyBatch || selectedAssetIds.length < 2}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-white/80 border border-[#8B0000]/20 text-[#8B0000] text-sm font-bold rounded-xl hover:bg-white transition-all disabled:opacity-50"
+                  >
+                    {isCreatingGroupScan ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    {isCreatingGroupScan
+                      ? "Starting Group Scan..."
+                      : selectedAssetIds.length >= 2
+                        ? `Group Scan (${selectedAssetIds.length})`
+                        : "Select 2+ for Group Scan"}
+                  </button>
+                  <button
+                    onClick={() => void handleScanAll()}
+                    disabled={orgScanLocked || isCreatingAnyBatch}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] text-white text-sm font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none cursor-pointer"
+                  >
+                    {isFullScanActive || isCreatingFullScan ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Zap className="w-4 h-4" />
+                    )}
+                    {isCreatingFullScan
+                      ? "Starting Full Scan..."
+                      : isFullScanActive
+                      ? `Full Scan Running (${(fullScan?.completedAssets ?? 0) + (fullScan?.failedAssets ?? 0)}/${fullScan?.totalAssets ?? 0})`
+                      : "Scan All Assets"}
+                  </button>
+                  </>
+                )}
+              </div>
+              {canScan && (fullScan || groupScan) && (
+                <p className="mt-2 text-[11px] font-bold text-[#8a5d33]/65">
+                  {fullScan
+                    ? `Full scan started ${formatDistanceToNow(new Date(fullScan.createdAt), { addSuffix: true })}`
+                    : groupScan
+                      ? `Group scan started ${formatDistanceToNow(new Date(groupScan.createdAt), { addSuffix: true })}`
+                      : ""}
+                </p>
+              )}
             </div>
           </div>
-          
-          {isAdmin && (
-            <div className="flex flex-col items-end gap-2">
-              <Link
-                href={`/app/${org.slug}/explore`}
-                className="flex items-center gap-2 px-4 py-2 bg-white/70 border border-[#8B0000]/20 text-[#8B0000] text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-white transition-colors"
-              >
-                Open Explorer
-              </Link>
-               <button
-                  onClick={handleScanAll}
-                  disabled={isFullScanActive}
-                  className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] text-white text-sm font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none cursor-pointer"
-               >
-                  {isFullScanActive ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Zap className="w-4 h-4" />
-                  )}
-                  {isFullScanActive
-                    ? `Full Scan Running (${runningTasks.length + queuedTasks.length} left)`
-                    : "Scan All Domains"}
-               </button>
-               {fullScan && (
-                 <p className="text-[11px] font-bold text-[#8a5d33]/65">
-                   Batch started {formatDistanceToNow(new Date(fullScan.createdAt), { addSuffix: true })}
-                 </p>
-               )}
-            </div>
-          )}
         </div>
+
+        {actionError && (
+          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {actionError}
+          </div>
+        )}
+        {activity?.lock.active && (
+          <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+            {lockMessage}
+          </div>
+        )}
+        {!canScan && (
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+            Your role does not currently have permission to launch OpenSSL scans.
+          </div>
+        )}
       </div>
 
-      {/* Toolbar */}
       <div className="px-6 py-4 bg-white/40 border-b border-amber-500/10 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative max-w-sm w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8a5d33]/40" />
@@ -468,49 +675,65 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
             className="w-full pl-9 pr-4 py-2 bg-white/50 border border-amber-500/20 rounded-xl text-sm font-medium text-[#3d200a] placeholder:text-[#8a5d33]/40 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
           />
         </div>
-        
+
         <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto px-1 sm:px-0 scrollbar-hide shrink-0">
-          <button 
+          <button
             onClick={() => setFilterType("all")}
-            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === 'all' ? 'bg-[#8B0000]/5 ring-1 ring-[#8B0000]/20' : 'hover:bg-black/5'}`}
+            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === "all" ? "bg-[#8B0000]/7" : "hover:bg-black/5"}`}
           >
             <span className="text-[9px] uppercase tracking-widest font-bold text-[#8a5d33]/50">Inventory</span>
             <span className="text-sm font-black text-[#3d200a]">{totalDiscovered}</span>
           </button>
-          
+
           <div className="w-px h-6 bg-amber-500/20 hidden sm:block mx-1"></div>
-          
-          <button 
+
+          <button
             onClick={() => setFilterType("successful")}
-            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === 'successful' ? 'bg-emerald-500/10 ring-1 ring-emerald-500/20' : 'hover:bg-black/5'}`}
+            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === "successful" ? "bg-emerald-500/10" : "hover:bg-black/5"}`}
           >
             <span className="text-[9px] uppercase tracking-widest font-bold text-[#8a5d33]/50">Successful</span>
             <span className="text-sm font-black text-emerald-600">{scanSuccessful}</span>
           </button>
-          
+
           <div className="w-px h-6 bg-amber-500/20 hidden sm:block mx-1"></div>
-          
-          <button 
+
+          <button
             onClick={() => setFilterType("failed")}
-            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === 'failed' ? 'bg-red-500/10 ring-1 ring-red-500/20' : 'hover:bg-black/5'}`}
+            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === "failed" ? "bg-red-500/10" : "hover:bg-black/5"}`}
           >
             <span className="text-[9px] uppercase tracking-widest font-bold text-[#8a5d33]/50">Failed</span>
             <span className="text-sm font-black text-red-600">{scanFailed}</span>
           </button>
-          
+
           <div className="w-px h-6 bg-amber-500/20 hidden sm:block mx-1"></div>
 
-          <button 
+          <button
+            onClick={() => setFilterType("dnsExpired")}
+            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === "dnsExpired" ? "bg-red-500/10" : "hover:bg-black/5"}`}
+          >
+            <span className="text-[9px] uppercase tracking-widest font-bold text-[#8a5d33]/50">DNS Expired</span>
+            <span className="text-sm font-black text-red-700">{dnsExpired}</span>
+          </button>
+
+          <div className="w-px h-6 bg-amber-500/20 hidden sm:block mx-1"></div>
+
+          <button
             onClick={() => setFilterType("unscanned")}
-            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === 'unscanned' ? 'bg-amber-500/10 ring-1 ring-amber-500/20' : 'hover:bg-black/5'}`}
+            className={`flex flex-col items-center px-3 py-1.5 rounded-xl transition-all outline-none ${filterType === "unscanned" ? "bg-amber-500/10" : "hover:bg-black/5"}`}
           >
             <span className="text-[9px] uppercase tracking-widest font-bold text-[#8a5d33]/50">Unscanned</span>
             <span className="text-sm font-black text-amber-600">{unscanned}</span>
           </button>
         </div>
+
+        {canScan && (
+          <div className="flex items-center gap-2 rounded-2xl bg-white/70 px-3 py-2 text-xs font-bold text-[#8a5d33]">
+            <span className="uppercase tracking-widest text-[#8a5d33]/55">Selected</span>
+            <span className="rounded-full bg-[#8B0000]/8 px-2 py-1 text-[#8B0000]">{selectedAssetIds.length}</span>
+          </div>
+        )}
       </div>
 
-      {/* List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {loading ? (
           <div className="flex items-center justify-center p-12">
@@ -527,48 +750,71 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
         ) : (
           filteredAssets.map((asset) => {
             const task = activeTaskByAsset.get(asset.id);
-            const isQueued = task?.status === "queued";
-            const isRunning = task?.status === "running" || asset.latestScan?.status === "pending" || asset.scanStatus === "scanning";
+            const isQueued = task?.status === "pending";
+            const isRunning =
+              task?.status === "running" ||
+              asset.latestScan?.status === "pending" ||
+              asset.latestScan?.status === "running" ||
+              asset.scanStatus === "scanning";
+            const isDnsExpired = asset.scanStatus === "expired";
             const isExpanded = expandedAssetId === asset.id;
+            const isSelected = selectedAssetIds.includes(asset.id);
 
             return (
               <div key={asset.id} className="bg-white/60 rounded-xl border border-amber-500/10 transition-all hover:bg-white/80 overflow-hidden shadow-sm">
-                <div 
-                   className="group flex flex-col sm:flex-row sm:items-center justify-between p-4 cursor-pointer"
-                   onClick={() => setExpandedAssetId(isExpanded ? null : asset.id)}
+                <div
+                  className="group flex flex-col sm:flex-row sm:items-center justify-between p-4 cursor-pointer"
+                  onClick={() => setExpandedAssetId(isExpanded ? null : asset.id)}
                 >
                   <div className="flex items-center gap-4">
+                    {canScan && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleAssetSelection(asset.id);
+                        }}
+                        className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+                          isSelected
+                            ? "border-[#8B0000] bg-[#8B0000] text-white"
+                            : "border-amber-500/20 bg-white text-transparent hover:border-[#8B0000]/40"
+                        }`}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center shrink-0">
                       <Globe className="w-5 h-5 text-emerald-600" />
                     </div>
                     <div>
                       <p className="text-base font-bold text-[#3d200a] leading-tight flex items-center gap-2">
-                         {asset.value}
-                         {asset.isRoot ? (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] uppercase tracking-widest leading-none">Root</span>
-                         ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[9px] uppercase tracking-widest leading-none">Leaf</span>
-                         )}
+                        {asset.value}
+                        {asset.isRoot ? (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] uppercase tracking-widest leading-none">Root</span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[9px] uppercase tracking-widest leading-none">Leaf</span>
+                        )}
                       </p>
                       <div className="flex items-center gap-2 mt-1.5">
                         {asset.latestScan ? (
-                           <>
-                             <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                               isQueued ? 'text-slate-500' :
-                               isRunning ? 'text-amber-500 animate-pulse' :
-                               asset.latestScan.status === 'completed' ? 'text-emerald-500' : 'text-red-500'
-                             }`}>
-                               {isQueued ? 'queued' : isRunning ? 'running' : asset.latestScan.status}
-                             </span>
-                             <span className="w-1 h-1 rounded-full bg-[#8a5d33]/20"></span>
-                             <span className="text-[10px] font-bold text-[#8a5d33]/50">
-                               {formatDistanceToNow(new Date((task?.createdAt || asset.latestScan.createdAt)), { addSuffix: true })}
-                             </span>
-                           </>
+                          <>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                              isQueued ? "text-slate-500" :
+                              isRunning ? "text-amber-500 animate-pulse" :
+                              isDnsExpired ? "text-red-600" :
+                              asset.latestScan.status === "completed" ? "text-emerald-500" : "text-red-500"
+                            }`}>
+                              {isQueued ? "queued" : isRunning ? "running" : isDnsExpired ? "dns expired" : asset.latestScan.status}
+                            </span>
+                            <span className="w-1 h-1 rounded-full bg-[#8a5d33]/20"></span>
+                            <span className="text-[10px] font-bold text-[#8a5d33]/50">
+                              {formatDistanceToNow(new Date(task?.createdAt || asset.latestScan.createdAt), { addSuffix: true })}
+                            </span>
+                          </>
                         ) : (
-                           <span className="text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider">
-                             {isQueued ? "Queued" : isRunning ? "Running" : "Not Scanned Yet"}
-                           </span>
+                          <span className="text-[10px] font-bold text-[#8a5d33]/50 uppercase tracking-wider">
+                            {isQueued ? "Queued" : isRunning ? "Running" : "Not Scanned Yet"}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -582,18 +828,21 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
                     >
                       Details
                     </Link>
-                    {isAdmin && (
+                    {canScan && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleScan(asset.id); }}
-                        disabled={isQueued || isRunning}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleScan(asset.id);
+                        }}
+                        disabled={isQueued || isRunning || orgScanLocked || isCreatingAnyBatch}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#8B0000] bg-[#8B0000]/5 border border-[#8B0000]/15 rounded-lg hover:bg-[#8B0000]/10 transition-colors disabled:opacity-50"
                       >
-                        {isQueued || isRunning ? (
-                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {isQueued || isRunning || isCreatingAnyBatch ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
-                           <Zap className="w-3.5 h-3.5" />
+                          <Zap className="w-3.5 h-3.5" />
                         )}
-                        {isRunning ? 'Scanning' : isQueued ? 'Queued' : 'Scan TLS'}
+                        {orgScanLocked && !isQueued && !isRunning ? "Locked" : isRunning ? "Scanning" : isQueued ? "Queued" : "Scan TLS"}
                       </button>
                     )}
                     <button className="p-1.5 text-[#8a5d33]/40 hover:text-[#8a5d33] transition-colors">
@@ -602,39 +851,45 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
                   </div>
                 </div>
 
-                {/* Expanded State */}
                 {isExpanded && (
                   <div className="p-4 pt-0 border-t border-amber-500/10 mt-2 bg-linear-to-b from-transparent to-[#fdf8f0]/40">
-                     <div className="pt-4">
-                       {isQueued ? (
-                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-3">
-                           <Clock className="w-5 h-5 text-slate-500 shrink-0" />
-                           <p className="text-sm font-semibold text-slate-700">
-                             This scan is queued and will start as soon as a worker slot becomes free.
-                           </p>
-                         </div>
-                       ) : isRunning ? (
-                         <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
-                           <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
-                           <div>
-                             <p className="text-sm font-semibold text-amber-700">OpenSSL TLS scan currently running...</p>
-                             {asset.latestScan?.status === "completed" && (
-                               <p className="mt-1 text-xs font-semibold text-amber-700/80">
-                                 Previous completed result remains available on the asset details page while this refresh runs.
-                               </p>
-                             )}
-                           </div>
-                         </div>
-                       ) : asset.latestScan ? (
-                         renderScanDetails(asset.latestScan)
-                       ) : (
-                         <div className="p-4 bg-white rounded-xl border border-amber-200/60">
-                           <p className="text-sm font-semibold text-[#8a5d33]/70">
-                             No completed scan is available yet for this asset.
-                           </p>
-                         </div>
-                       )}
-                     </div>
+                    <div className="pt-4">
+                      {isQueued ? (
+                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-3">
+                          <Clock className="w-5 h-5 text-slate-500 shrink-0" />
+                          <p className="text-sm font-semibold text-slate-700">
+                            This scan is queued and will start as soon as a worker slot becomes free.
+                          </p>
+                        </div>
+                      ) : isRunning ? (
+                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
+                          <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+                          <div>
+                            <p className="text-sm font-semibold text-amber-700">OpenSSL TLS scan currently running...</p>
+                            {asset.latestScan?.status === "completed" && (
+                              <p className="mt-1 text-xs font-semibold text-amber-700/80">
+                                Previous completed result remains available on the asset details page while this refresh runs.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (asset.latestSuccessfulScan || asset.latestScan) ? (
+                        <div className="space-y-3">
+                          {asset.latestScan?.status === "failed" && asset.latestSuccessfulScan && (
+                            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                              The latest scan attempt failed, so the most recent successful OpenSSL result is shown below.
+                            </div>
+                          )}
+                          {renderScanDetails(asset.latestSuccessfulScan || asset.latestScan!)}
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-white rounded-xl border border-amber-200/60">
+                          <p className="text-sm font-semibold text-[#8a5d33]/70">
+                            No completed scan is available yet for this asset.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -642,7 +897,6 @@ export default function AssetScanning({ org, isAdmin }: AssetScanningProps) {
           })
         )}
       </div>
-
     </div>
   );
 }

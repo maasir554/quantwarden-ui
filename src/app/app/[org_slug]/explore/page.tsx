@@ -15,7 +15,7 @@ export default async function AssetExplorePage({
   const resolvedQuery = await searchParams;
   
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) redirect("/auth/sign-in");
+  if (!session?.user) redirect("/login");
 
   const orgRows = await prisma.$queryRawUnsafe<{ id: string, name: string, slug: string }[]>(
      `SELECT id, name, slug FROM "organization" WHERE "slug" = $1 LIMIT 1`, resolvedParams.org_slug

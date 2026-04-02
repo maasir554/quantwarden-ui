@@ -9,7 +9,7 @@ export default async function AssetIntelligencePage({ params }: { params: Promis
   const resolvedParams = await params;
   
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) redirect("/auth/sign-in");
+  if (!session?.user) redirect("/login");
 
   const orgRows = await prisma.$queryRawUnsafe<{ id: string, name: string, slug: string }[]>(
      `SELECT id, name, slug FROM "organization" WHERE "slug" = $1 LIMIT 1`, resolvedParams.org_slug
@@ -24,6 +24,27 @@ export default async function AssetIntelligencePage({ params }: { params: Promis
   );
   if (memberRows.length === 0) redirect("/app");
   const isAdmin = memberRows[0].role === "owner" || memberRows[0].role === "admin";
+  const canScan =
+    isAdmin ||
+    (
+      await prisma.$queryRawUnsafe<{ permissions: string | null }[]>(
+        `SELECT r.permissions
+         FROM "member" m
+         LEFT JOIN "role" r
+           ON r."organizationId" = m."organizationId"
+          AND (r.id::text = m.role OR LOWER(r.name) = LOWER(m.role))
+         WHERE m."organizationId" = $1 AND m."userId" = $2
+         LIMIT 1`,
+        org.id,
+        session.user.id
+      )
+    ).some((row) => {
+      try {
+        return Boolean(row.permissions && JSON.parse(row.permissions)?.scan);
+      } catch {
+        return false;
+      }
+    });
 
   // Check if it's a UUID/CUID structure (broad match for alphanumeric IDs vs domains)
   // CUIDs and UUIDs lack dots, domains have dots.
@@ -63,6 +84,7 @@ export default async function AssetIntelligencePage({ params }: { params: Promis
                asset={asset} 
                initialScans={scanRows}
                isAdmin={isAdmin}
+               canScan={canScan}
             />
          </div>
     </div>

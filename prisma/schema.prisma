@@ -37,6 +37,7 @@ model User {
   members       Member[]
   invitations   Invitation[]
   joinRequests  JoinRequest[]
+  initiatedScanBatches AssetScanBatch[] @relation("AssetScanBatchInitiator")
 
   @@unique([email])
   @@map("user")
@@ -104,6 +105,7 @@ model Organization {
   invitations  Invitation[]
   roles        Role[]
   assets       Asset[]
+  assetScanBatches AssetScanBatch[]
   nmapAssets   NmapAsset[]
   joinRequests JoinRequest[]
 
@@ -195,14 +197,38 @@ model AssetScan {
   id          String   @id @default(cuid())
   assetId     String
   asset       Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  batchId     String?
+  batch       AssetScanBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
   type        String   @default("openssl") // The type of TLS scan
-  status      String   @default("pending") // pending, completed, failed
+  status      String   @default("pending") // pending, running, completed, failed
   resultData  String?  // JSON text representation of the scanner output
   createdAt   DateTime @default(now())
   completedAt DateTime?
 
   @@index([assetId])
+  @@index([batchId])
   @@map("asset_scan")
+}
+
+model AssetScanBatch {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  initiatedByUserId String
+  initiatedBy       User         @relation("AssetScanBatchInitiator", fields: [initiatedByUserId], references: [id], onDelete: Cascade)
+  type              String       // single, group, full
+  status            String       @default("queued") // queued, running, completed, failed
+  totalAssets       Int          @default(0)
+  completedAssets   Int          @default(0)
+  failedAssets      Int          @default(0)
+  createdAt         DateTime     @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  scans             AssetScan[]
+
+  @@index([organizationId, status])
+  @@index([initiatedByUserId])
+  @@map("asset_scan_batch")
 }
 
 model NmapAsset {

@@ -103,6 +103,11 @@ export async function renderOrganizationPage(orgSlug: string, activeSection: Das
     return { id: r.id, name: r.name, permissions: perms };
   });
 
+  const canScan =
+    memberRole === "owner" ||
+    memberRole === "admin" ||
+    org.roles.some((role: any) => (role.id === memberRole || role.name?.toLowerCase?.() === memberRole.toLowerCase()) && role.permissions?.scan);
+
   let setupComplete = false;
   if (org.metadata) {
     try {
@@ -121,6 +126,7 @@ export async function renderOrganizationPage(orgSlug: string, activeSection: Das
       currentUserRole={memberRole}
       currentUserId={session.user.id}
       activeSection={activeSection}
+      canScan={canScan}
     />
   );
 }

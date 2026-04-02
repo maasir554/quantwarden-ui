@@ -18,12 +18,14 @@ import NmapScanning from "./NmapScanning";
 import NmapOverview from "./NmapOverview";
 import { Activity, Server } from "lucide-react";
 import type { DashboardSection } from "./dashboard-sections";
+import ScanActivityMonitor from "./ScanActivityMonitor";
 
 interface OrgDashboardProps {
   org: any;
   currentUserRole: string;
   currentUserId: string;
   activeSection: DashboardSection;
+  canScan: boolean;
 }
 
 const navItems = [
@@ -35,7 +37,7 @@ const navItems = [
   { id: "team", label: "Team Management", icon: Users },
 ];
 
-export default function OrgDashboard({ org, currentUserRole, currentUserId, activeSection }: OrgDashboardProps) {
+export default function OrgDashboard({ org, currentUserRole, currentUserId, activeSection, canScan }: OrgDashboardProps) {
   const { data: sessionData } = useSession();
   const user = sessionData?.user;
 
@@ -99,6 +101,10 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId, acti
               </Link>
             );
           })}
+
+          <div className="px-2 pt-4">
+            <ScanActivityMonitor orgId={org.id} orgSlug={org.slug} canScan={canScan} />
+          </div>
         </nav>
 
         {/* Sidebar Footer — User */}
@@ -142,6 +148,9 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId, acti
             </Link>
           );
         })}
+        <div className="shrink-0 min-w-[240px]">
+          <ScanActivityMonitor orgId={org.id} orgSlug={org.slug} canScan={canScan} compact />
+        </div>
       </div>
 
       {/* Main Content Area */}
@@ -173,6 +182,7 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId, acti
             <AssetScanning
               org={org}
               isAdmin={isAdmin}
+              canScan={canScan}
             />
           )}
           {activeSection === "nmap-overview" && (

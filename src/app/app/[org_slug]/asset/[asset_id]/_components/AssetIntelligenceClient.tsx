@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
+import { useScanActivity } from "@/components/scan-activity-provider";
 
 function SectionCard({
   title,
@@ -112,19 +113,30 @@ function formatScanTimestamp(timestamp: string | null | undefined) {
   return `${date.toLocaleString()} (${formatDistanceToNow(date, { addSuffix: true })})`;
 }
 
-export default function AssetIntelligenceClient({ org, asset, initialScans, isAdmin }: any) {
+export default function AssetIntelligenceClient({ org, asset, initialScans, isAdmin, canScan }: any) {
   const router = useRouter();
   const [scans, setScans] = useState(initialScans || []);
   const [isScanning, setIsScanning] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const previousAssetScanActiveRef = useRef(false);
+  const { activity, createBatch, pendingBatchType } = useScanActivity(org.id, {
+    orgSlug: org.slug,
+  });
+  const isCreatingBatch = pendingBatchType !== null;
 
   useEffect(() => {
     setScans(initialScans || []);
   }, [initialScans]);
 
   const latestScan = scans.length > 0 ? scans[0] : null;
-  const parsed = useMemo(() => parseOpenSSLScanResult(latestScan?.resultData), [latestScan?.resultData]);
+  const latestSuccessfulScan = useMemo(
+    () => scans.find((scan: any) => scan.status === "completed") || null,
+    [scans]
+  );
+  const displayScan = latestSuccessfulScan || latestScan;
+  const parsed = useMemo(() => parseOpenSSLScanResult(displayScan?.resultData), [displayScan?.resultData]);
   const payload = parsed.raw;
   const summary = parsed.summary;
   const activeProbe = useMemo(() => {
@@ -137,24 +149,41 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
       null
     );
   }, [payload, summary]);
+  const assetScanActive = useMemo(
+    () =>
+      Boolean(
+        activity?.activeBatches.some((batch) =>
+          batch.items.some((item) => item.assetId === asset.id && (item.status === "pending" || item.status === "running"))
+        )
+      ),
+    [activity?.activeBatches, asset.id]
+  );
+
+  useEffect(() => {
+    if (previousAssetScanActiveRef.current && !assetScanActive) {
+      router.refresh();
+    }
+
+    previousAssetScanActiveRef.current = assetScanActive;
+  }, [assetScanActive, router]);
 
   const handleScan = async () => {
     setIsScanning(true);
+    setScanError(null);
     try {
-      const response = await fetch("/api/orgs/scans/openssl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assetId: asset.id, orgId: org.id }),
+      const result = await createBatch({
+        type: "single",
+        assetIds: [asset.id],
       });
 
-      if (!response.ok) {
-        throw new Error("OpenSSL scan request failed.");
+      if (!result.ok) {
+        throw new Error(result.error || "OpenSSL scan request failed.");
       }
 
       router.refresh();
-      setTimeout(() => window.location.reload(), 800);
     } catch (error) {
       console.error(error);
+      setScanError(error instanceof Error ? error.message : "OpenSSL scan request failed.");
     } finally {
       setIsScanning(false);
     }
@@ -196,13 +225,21 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
   };
 
   const scanStatusTone =
-    latestScan?.status === "completed"
+    asset.scanStatus === "expired"
+      ? "bg-red-100 text-red-700"
+      : latestScan?.status === "completed"
       ? "bg-emerald-100 text-emerald-700"
       : latestScan?.status === "failed"
         ? "bg-red-100 text-red-700"
-        : latestScan?.status === "pending"
+        : latestScan?.status === "pending" || latestScan?.status === "running"
           ? "bg-amber-100 text-amber-700"
           : "bg-white/70 text-[#8a5d33]";
+  const showingFallbackSuccessfulScan =
+    Boolean(latestScan && latestScan.status === "failed" && latestSuccessfulScan && latestSuccessfulScan.id !== latestScan.id);
+  const latestScanError = useMemo(
+    () => (latestScan ? parseOpenSSLScanResult(latestScan.resultData).error : null),
+    [latestScan]
+  );
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col px-6 py-8 sm:px-8">
@@ -228,19 +265,33 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
                 {asset.type}
               </span>
               <span className={`rounded-full px-3 py-1 text-[10px] font-extrabold uppercase tracking-widest ${scanStatusTone}`}>
-                {latestScan?.status || "unscanned"}
+                {asset.scanStatus === "expired" ? "dns expired" : latestScan?.status || "unscanned"}
               </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-semibold text-[#8a5d33]/75">
               <span>Added on {new Date(asset.createdAt).toLocaleDateString()}</span>
               <span>Last scan: {formatScanTimestamp(latestScan?.completedAt || latestScan?.createdAt)}</span>
+              {showingFallbackSuccessfulScan && (
+                <span>Last successful result: {formatScanTimestamp(latestSuccessfulScan?.completedAt || latestSuccessfulScan?.createdAt)}</span>
+              )}
               {payload?.resolved_ip && <span>Resolved IP: {payload.resolved_ip}</span>}
             </div>
           </div>
 
-          {isAdmin && (
+          {(isAdmin || canScan) && (
             <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+              {activity?.lock.active && (
+                <div className="basis-full rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 xl:max-w-[520px]">
+                  {activity.lock.message} Started by {activity.lock.initiatedBy?.name || activity.lock.initiatedBy?.email || "Unknown"}.
+                </div>
+              )}
+              {scanError && (
+                <div className="basis-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 xl:max-w-[520px]">
+                  {scanError}
+                </div>
+              )}
+              {isAdmin && (
               <button
                 onClick={handleDiscover}
                 disabled={isDiscovering || isScanning}
@@ -249,14 +300,18 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
                 {isDiscovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />}
                 Deep Discover
               </button>
+              )}
+              {canScan && (
               <button
                 onClick={handleScan}
-                disabled={isDiscovering || isScanning}
+                disabled={isDiscovering || isScanning || isCreatingBatch || assetScanActive || activity?.lock.active}
                 className="flex items-center gap-2 rounded-2xl bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] px-4 py-3 text-sm font-bold text-white transition-all hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
               >
-                {isScanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Re-Scan TLS
+                {isScanning || isCreatingBatch || assetScanActive ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {activity?.lock.active ? "Scan Locked" : isCreatingBatch ? "Starting Scan..." : assetScanActive ? "Scan Running" : "Re-Scan TLS"}
               </button>
+              )}
+              {isAdmin && (
               <button
                 onClick={handleDelete}
                 disabled={isDeleting}
@@ -264,14 +319,25 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
               >
                 <Trash2 className="h-4 w-4" />
               </button>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {!latestScan ? (
+      {!displayScan ? (
         <div className="flex h-56 items-center justify-center rounded-[2rem] border-2 border-dashed border-amber-500/20 bg-amber-50/50">
           <p className="text-sm font-bold text-[#8a5d33]/50">No OpenSSL scan completed yet. Run a scan to populate the intelligence view.</p>
+        </div>
+      ) : latestScan?.status === "failed" && !latestSuccessfulScan ? (
+        <div className="rounded-3xl border border-red-200 bg-red-50 p-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+            <div>
+              <p className="text-sm font-black uppercase tracking-widest text-red-700/70">Scan Error</p>
+              <p className="mt-1 text-sm font-semibold text-red-700">{latestScanError || "The latest scan failed."}</p>
+            </div>
+          </div>
         </div>
       ) : parsed.error ? (
         <div className="rounded-3xl border border-red-200 bg-red-50 p-5">
@@ -289,12 +355,33 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
         </div>
       ) : (
         <div className="space-y-6 pb-10">
+          {showingFallbackSuccessfulScan && (
+            <div className="rounded-3xl border border-amber-300 bg-amber-50 p-5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <div>
+                  <p className="text-sm font-black uppercase tracking-widest text-amber-800/70">Latest Attempt Failed</p>
+                  <p className="mt-1 text-sm font-semibold text-amber-800">
+                    The most recent scan attempt failed, so the intelligence below is from the last successful OpenSSL scan.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               label="Certificate Validity"
-              value={summary.certificateValid === false ? "Invalid" : "Valid"}
-              icon={summary.certificateValid === false ? AlertTriangle : CheckCircle2}
-              toneClass={summary.certificateValid === false ? "text-red-500" : "text-emerald-500"}
+              value={
+                summary.dnsMissing
+                  ? "Unavailable"
+                  : summary.certificateValid === false
+                    ? "Invalid"
+                    : summary.certificateValid === true
+                      ? "Valid"
+                      : "Unknown"
+              }
+              icon={summary.dnsMissing || summary.certificateValid === false ? AlertTriangle : CheckCircle2}
+              toneClass={summary.dnsMissing || summary.certificateValid === false ? "text-red-500" : "text-emerald-500"}
             />
             <MetricCard
               label="Primary TLS"
@@ -304,9 +391,9 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
             />
             <MetricCard
               label="Expiry"
-              value={summary.daysRemaining !== null ? `${summary.daysRemaining} days` : "Unknown"}
+              value={summary.dnsMissing ? "DNS Expired" : summary.daysRemaining !== null ? `${summary.daysRemaining} days` : "Unknown"}
               icon={Calendar}
-              toneClass={summary.daysRemaining !== null && summary.daysRemaining > 30 ? "text-emerald-500" : "text-amber-500"}
+              toneClass={summary.dnsMissing ? "text-red-500" : summary.daysRemaining !== null && summary.daysRemaining > 30 ? "text-emerald-500" : "text-amber-500"}
             />
             <MetricCard
               label="Preferred Cipher"
@@ -347,6 +434,7 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
                 <DetailRow label="Subject Common Name" value={summary.subjectCommonName || "Unknown"} />
                 <DetailRow label="Issuer Authority" value={summary.issuerCommonName || "Unknown"} />
                 <DetailRow label="Trust Level" value={summary.selfSignedCert ? "Self-Signed" : "Trusted CA"} />
+                <DetailRow label="DNS Status" value={summary.dnsMissing ? "Removed from DNS" : "Resolvable"} />
                 <DetailRow label="Valid From" value={payload.certificate.not_before || "Unknown"} />
                 <DetailRow label="Valid Until" value={payload.certificate.not_after || "Unknown"} />
                 <DetailRow label="SAN Coverage" value={`${summary.sanCount} domains`} />
@@ -482,6 +570,20 @@ export default function AssetIntelligenceClient({ org, asset, initialScans, isAd
                     <span>{warning}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {summary.dnsMissing && (
+            <div className="rounded-3xl border border-red-200 bg-red-50 p-5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+                <div>
+                  <p className="text-sm font-black uppercase tracking-widest text-red-700/70">DNS Expired</p>
+                  <p className="mt-1 text-sm font-semibold text-red-700">
+                    This target no longer resolves in DNS. The OpenSSL API was reached successfully, but no certificate or TLS session could be negotiated because the domain has been removed from DNS.
+                  </p>
+                </div>
               </div>
             </div>
           )}

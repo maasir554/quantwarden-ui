@@ -92,12 +92,17 @@ export async function GET(req: NextRequest) {
        // Validity Processing
        const daysRem = summary.daysRemaining;
        const isValid = summary.certificateValid;
+       const isDnsMissing = summary.dnsMissing;
        
        let isRisk = false;
        let issue = "";
        let sortVal = 9999;
 
-       if (isValid === false) {
+       if (isDnsMissing) {
+         isRisk = true;
+         issue = "DNS Expired";
+         sortVal = -2;
+       } else if (isValid === false) {
          expiredCerts++;
          isRisk = true;
          issue = "Invalid Certificate";

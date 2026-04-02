@@ -3,20 +3,29 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { 
-  ArrowLeft, Search, Filter, ShieldAlert, KeyRound, Key, Lock,
-  Globe, Server, ChevronRight, Loader2, Calendar, AlertTriangle, ShieldCheck
+  ArrowLeft, Search, KeyRound, Key, Lock,
+  Globe, Server, ChevronRight, Loader2, AlertTriangle, ShieldCheck, CheckCircle2, Radio
 } from "lucide-react";
 
 export default function AssetExplorerClient({ org, isAdmin, initialFilter, initialCipher, initialKeySize, initialTls }: any) {
-  const [filter, setFilter] = useState(initialFilter || "");
+  const [dnsState, setDnsState] = useState("");
+  const [timeoutOnly, setTimeoutOnly] = useState(false);
   const [cipher, setCipher] = useState(initialCipher || "");
   const [keySize, setKeySize] = useState(initialKeySize || "");
   const [tls, setTls] = useState(initialTls || "");
+  const [kexAlgorithms, setKexAlgorithms] = useState<string[]>([]);
+  const [kexGroups, setKexGroups] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [assets, setAssets] = useState<any[]>([]);
-  const [filterOptions, setFilterOptions] = useState<{ ciphers: string[], keySizes: string[], tlsVersions: string[] }>({ ciphers: [], keySizes: [], tlsVersions: [] });
+  const [filterOptions, setFilterOptions] = useState<{
+    ciphers: string[];
+    keySizes: string[];
+    tlsVersions: string[];
+    kexAlgorithms: string[];
+    kexGroups: string[];
+  }>({ ciphers: [], keySizes: [], tlsVersions: [], kexAlgorithms: [], kexGroups: [] });
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -30,10 +39,13 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
       try {
         const q = new URLSearchParams();
         q.append("orgId", org.id);
-        if (filter) q.append("filter", filter);
+        if (dnsState) q.append("dnsState", dnsState);
+        if (timeoutOnly) q.append("timeoutOnly", "true");
         if (cipher) q.append("cipher", cipher);
         if (keySize) q.append("keySize", keySize);
         if (tls) q.append("tls", tls);
+        if (kexAlgorithms.length > 0) q.append("kexAlgos", kexAlgorithms.join(","));
+        if (kexGroups.length > 0) q.append("kexGroups", kexGroups.join(","));
         if (debouncedSearch) q.append("search", debouncedSearch);
 
         const res = await fetch(`/api/orgs/explore?${q.toString()}`);
@@ -51,7 +63,15 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
     };
     fetchAssets();
     return () => { mounted = false; };
-  }, [filter, cipher, keySize, tls, debouncedSearch, org.id]);
+  }, [dnsState, timeoutOnly, cipher, keySize, tls, kexAlgorithms, kexGroups, debouncedSearch, org.id]);
+
+  const toggleSelection = (value: string, selected: string[], setter: (values: string[]) => void) => {
+    if (selected.includes(value)) {
+      setter(selected.filter((item) => item !== value));
+      return;
+    }
+    setter([...selected, value]);
+  };
 
   return (
     <div className="max-w-275 w-full mx-auto px-6 sm:px-8 py-8 flex flex-col min-h-screen">
@@ -78,7 +98,7 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
       {/* Filter / Search Bar */}
       <div className="flex flex-col gap-4 mb-8 bg-white/40 backdrop-blur-xl border border-white/40 rounded-3xl p-5 shadow-sm ring-1 ring-amber-500/10 shrink-0">
         
-        {/* Row 1: Search + Health */}
+        {/* Row 1: Search + DNS */}
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8a5d33]/50" />
@@ -92,20 +112,21 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
           </div>
 
           <div className="flex items-center gap-2 bg-white/45 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/55 shrink-0">
-            <Filter className="w-4 h-4 text-[#8B0000] shrink-0" />
+            <Radio className="w-4 h-4 text-[#8B0000] shrink-0" />
             <select 
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              value={dnsState}
+              onChange={(e) => setDnsState(e.target.value)}
               className="bg-transparent text-sm font-bold text-[#3d200a] outline-none cursor-pointer border-none ring-0 w-full"
             >
-              <option value="">All Health States</option>
-              <option value="attention">Immediate Attention</option>
+              <option value="">Any DNS State</option>
+              <option value="found">DNS Found</option>
+              <option value="not_found">DNS Not Found</option>
             </select>
           </div>
         </div>
 
-        {/* Row 2: Cipher, Key Size, TLS dropdowns */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        {/* Row 2: Cipher, Key Size, TLS + Timeout */}
+        <div className="flex flex-col lg:flex-row gap-3">
           <div className="flex items-center gap-2 bg-white/45 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/55 flex-1 min-w-0">
             <KeyRound className="w-4 h-4 text-emerald-600 shrink-0" />
             <select
@@ -146,6 +167,70 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setTimeoutOnly((value) => !value)}
+            className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition ${
+              timeoutOnly
+                ? "border-red-300 bg-red-50 text-red-700"
+                : "border-white/55 bg-white/45 text-[#6d3f1d]"
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            Scan Timeouted
+          </button>
+        </div>
+
+        {/* Row 3: Key exchange tick lists */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div className="rounded-xl border border-white/55 bg-white/45 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-[#6d3f1d]">Key Exchange Algorithms</p>
+              <span className="text-[11px] font-bold text-[#8a5d33]">{kexAlgorithms.length} selected</span>
+            </div>
+            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+              {filterOptions.kexAlgorithms.length === 0 ? (
+                <p className="text-xs font-semibold text-[#8a5d33]/70">No discovered algorithms yet.</p>
+              ) : (
+                filterOptions.kexAlgorithms.map((algo) => (
+                  <label key={algo} className="flex items-center gap-2 text-sm font-semibold text-[#3d200a]">
+                    <input
+                      type="checkbox"
+                      checked={kexAlgorithms.includes(algo)}
+                      onChange={() => toggleSelection(algo, kexAlgorithms, setKexAlgorithms)}
+                      className="h-3.5 w-3.5 rounded border-[#8B0000]/35 text-[#8B0000] focus:ring-[#8B0000]/30"
+                    />
+                    <span className="truncate">{algo}</span>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/55 bg-white/45 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-[#6d3f1d]">Negotiated Groups</p>
+              <span className="text-[11px] font-bold text-[#8a5d33]">{kexGroups.length} selected</span>
+            </div>
+            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+              {filterOptions.kexGroups.length === 0 ? (
+                <p className="text-xs font-semibold text-[#8a5d33]/70">No discovered groups yet.</p>
+              ) : (
+                filterOptions.kexGroups.map((group) => (
+                  <label key={group} className="flex items-center gap-2 text-sm font-semibold text-[#3d200a]">
+                    <input
+                      type="checkbox"
+                      checked={kexGroups.includes(group)}
+                      onChange={() => toggleSelection(group, kexGroups, setKexGroups)}
+                      className="h-3.5 w-3.5 rounded border-[#8B0000]/35 text-[#8B0000] focus:ring-[#8B0000]/30"
+                    />
+                    <span className="truncate">{group}</span>
+                  </label>
+                ))
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -201,6 +286,11 @@ export default function AssetExplorerClient({ org, isAdmin, initialFilter, initi
                           <div className="flex items-center gap-1.5 text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-md">
                              <AlertTriangle className="w-3 h-3" />
                              {asset.summary.issue}
+                          </div>
+                        ) : asset.summary?.timedOut ? (
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-md">
+                             <AlertTriangle className="w-3 h-3" />
+                             Scan Timeout
                           </div>
                         ) : asset.summary?.valid ? (
                           <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Shield, LogOut, User, Mail, ChevronDown, Loader2, PencilLine } from "lucide-react";
 import NavigationProgress from "@/components/ui/navigation-progress";
 import { ScanActivityProvider } from "@/components/scan-activity-provider";
+import { Toaster } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -49,6 +50,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <ScanActivityProvider>
       <div className="min-h-screen bg-[#fffcf5] font-sans text-slate-900 selection:bg-[#8B0000] selection:text-white overscroll-none">
+        <Toaster
+          position="top-right"
+          expand
+          toastOptions={{
+            style: {
+              background: "rgba(255, 248, 235, 0.98)",
+              color: "#3d200a",
+              border: "1px solid rgba(217, 119, 6, 0.18)",
+              boxShadow: "0 18px 45px rgba(61, 32, 10, 0.12)",
+            },
+            actionButtonStyle: {
+              background: "#8B0000",
+              color: "#ffffff",
+            },
+            cancelButtonStyle: {
+              background: "rgba(139, 0, 0, 0.08)",
+              color: "#8B0000",
+            },
+          }}
+        />
         <Suspense fallback={null}>
           <NavigationProgress />
         </Suspense>

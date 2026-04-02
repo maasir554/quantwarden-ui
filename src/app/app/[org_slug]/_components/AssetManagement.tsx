@@ -217,7 +217,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
   // === Root assets ===
   const [rootAssets, setRootAssets] = useState<{
     id: string; value: string; type: "domain" | "ip" | "unknown";
-    addedAt: string; scanning: boolean; statusMessage?: string;
+    addedAt: string; scanning: boolean; statusMessage?: string; scanStatus?: string;
     subdomains: string[];
   }[]>(() => {
     return orgAssets.filter(a => a.isRoot).map(a => ({
@@ -226,6 +226,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
       type: getAssetType(a.value),
       addedAt: new Date(a.createdAt).toISOString(),
       scanning: a.scanStatus === 'scanning',
+      scanStatus: a.scanStatus,
       statusMessage: a.scanStatus === 'scanning' ? "Scanning in background..." : "",
       subdomains: orgAssets.filter(leaf => leaf.parentId === a.id).map(l => l.value),
     }));
@@ -234,7 +235,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
   // === Leaf assets ===
   const [leafAssets, setLeafAssets] = useState<{
     id: string; value: string; type: "domain" | "ip" | "unknown";
-    parentId: string | null; addedAt: string;
+    parentId: string | null; addedAt: string; scanStatus?: string;
   }[]>(() => {
     return orgAssets.filter(a => !a.isRoot).map(a => ({
       id: a.id,
@@ -242,6 +243,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
       type: getAssetType(a.value),
       parentId: a.parentId,
       addedAt: new Date(a.createdAt).toISOString(),
+      scanStatus: a.scanStatus,
     }));
   });
 
@@ -292,6 +294,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
         type,
         addedAt: new Date().toISOString(),
         scanning: false,
+        scanStatus: "idle",
         subdomains: [],
       });
       
@@ -334,6 +337,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
         type,
         parentId: null,
         addedAt: new Date().toISOString(),
+        scanStatus: "idle",
       });
 
       // Call API approx
@@ -467,23 +471,28 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
                   if (pa.scanning && fresh.scanStatus !== 'scanning') {
                     // It finished
                     const newSubdomains = data.assets.filter((leaf: any) => leaf.parentId === pa.id).map((l:any) => l.value);
-                    return { ...pa, scanning: false, statusMessage: "", subdomains: Array.from(new Set([...pa.subdomains, ...newSubdomains])) };
+                    return { ...pa, scanning: false, scanStatus: fresh.scanStatus, statusMessage: "", subdomains: Array.from(new Set([...pa.subdomains, ...newSubdomains])) };
                   }
                   if (!pa.scanning && fresh.scanStatus === 'scanning') {
                     // It started syncing externally
-                    return { ...pa, scanning: true, statusMessage: "Scanning in background..." };
+                    return { ...pa, scanning: true, scanStatus: fresh.scanStatus, statusMessage: "Scanning in background..." };
                   }
+                  return { ...pa, scanStatus: fresh.scanStatus };
                 }
                 return pa;
              }));
 
              setLeafAssets(currentLeafs => {
                 const currentIds = new Set(currentLeafs.map(p => p.id));
+                const updated = currentLeafs.map((leaf) => {
+                  const fresh = data.assets.find((asset: any) => asset.id === leaf.id);
+                  return fresh ? { ...leaf, scanStatus: fresh.scanStatus } : leaf;
+                });
                 const newLeafs = data.assets.filter((a: any) => !a.isRoot && !currentIds.has(a.id)).map((a: any) => ({
-                   id: a.id, value: a.value, type: getAssetType(a.value), parentId: a.parentId, addedAt: new Date(a.createdAt).toISOString()
+                   id: a.id, value: a.value, type: getAssetType(a.value), parentId: a.parentId, addedAt: new Date(a.createdAt).toISOString(), scanStatus: a.scanStatus
                 }));
-                if (newLeafs.length > 0) return [...currentLeafs, ...newLeafs];
-                return currentLeafs;
+                if (newLeafs.length > 0) return [...updated, ...newLeafs];
+                return updated;
              });
           }
         })
@@ -504,6 +513,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
   // === Render Asset Row (Root) ===
   const renderRootAssetRow = (asset: typeof rootAssets[0]) => {
     const Icon = getAssetIcon(asset.type);
+    const isDnsExpired = asset.scanStatus === "expired";
     return (
       <div
         key={asset.id}
@@ -528,6 +538,11 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
               {asset.subdomains.length > 0 && (
                 <span className="text-[9px] font-bold text-[#8a5d33]/50">
                   {asset.subdomains.length} sub{asset.subdomains.length > 1 ? "s" : ""}
+                </span>
+              )}
+              {isDnsExpired && (
+                <span className="text-[9px] font-bold uppercase tracking-wider text-red-600">
+                  DNS Expired
                 </span>
               )}
               {asset.statusMessage && (
@@ -576,6 +591,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
   const renderLeafAssetRow = (asset: typeof leafAssets[0]) => {
     const Icon = getAssetIcon(asset.type);
     const parent = rootAssets.find((r) => r.id === asset.parentId);
+    const isDnsExpired = asset.scanStatus === "expired";
     return (
       <div
         key={asset.id}
@@ -601,6 +617,11 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, i
                 <span className="text-[9px] text-[#8a5d33]/40 flex items-center gap-0.5">
                   <ChevronRight className="w-2.5 h-2.5" />
                   {parent.value}
+                </span>
+              )}
+              {isDnsExpired && (
+                <span className="text-[9px] font-bold uppercase tracking-wider text-red-600">
+                  DNS Expired
                 </span>
               )}
             </div>

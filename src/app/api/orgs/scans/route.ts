@@ -32,7 +32,27 @@ export async function GET(req: NextRequest) {
     const assets = await prisma.$queryRawUnsafe<any[]>(
       `SELECT 
          a.id, a.value, a.type, a."isRoot", a."parentId", a."scanStatus", a."lastScanDate",
-         (SELECT row_to_json(s) FROM "asset_scan" s WHERE s."assetId" = a.id AND s.type = 'openssl' ORDER BY s."createdAt" DESC LIMIT 1) as "latestScan"
+         (
+           SELECT row_to_json(s)
+           FROM "asset_scan" s
+           WHERE s."assetId" = a.id
+             AND s.type = 'openssl'
+           ORDER BY
+             COALESCE(s."completedAt", s."createdAt") DESC,
+             s."createdAt" DESC
+           LIMIT 1
+         ) as "latestScan",
+         (
+           SELECT row_to_json(s)
+           FROM "asset_scan" s
+           WHERE s."assetId" = a.id
+             AND s.type = 'openssl'
+             AND s.status = 'completed'
+           ORDER BY
+             COALESCE(s."completedAt", s."createdAt") DESC,
+             s."createdAt" DESC
+           LIMIT 1
+         ) as "latestSuccessfulScan"
        FROM "asset" a
        WHERE a."organizationId" = $1
        ORDER BY a.value ASC`,
