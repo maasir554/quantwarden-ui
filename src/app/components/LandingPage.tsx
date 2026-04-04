@@ -22,7 +22,7 @@ import {
 
 export default function LandingPage() {
   const [isScrolled, setIsScrolled] = useState(false);
-  const { data: sessionData, isPending } = useSession();
+  const { data: sessionData } = useSession();
   const isLoggedIn = !!sessionData?.session;
 
   const domains = [
@@ -140,7 +140,7 @@ export default function LandingPage() {
       {/* Sticky Navigation Bar */}
       <nav
         className={`fixed top-0 w-full z-50 transition-all duration-300 border-b border-transparent ${isScrolled
-          ? "py-3 bg-amber-50/85 backdrop-blur-xl border-[#8B0000]/10"
+          ? "py-3 bg-white/70 backdrop-blur-xl border-[#8B0000]/10"
           : "py-6 bg-transparent"
           }`}
       >
@@ -160,22 +160,24 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div>
-            {isPending ? (
-              <div className="w-[100px] h-[40px] bg-black/10 animate-pulse rounded-full" />
-            ) : isLoggedIn ? (
+          <div className="[perspective:1000px] h-[40px] flex items-center justify-end min-w-[120px]">
+            {isLoggedIn ? (
               <Link
                 href="/app"
-                className="group flex items-center gap-2 px-6 py-2.5 bg-[#8B0000] text-white text-sm font-semibold rounded-full hover:bg-[#730000] shadow-md shadow-[#8B0000]/20 transition-all"
+                className="group flex items-center justify-center px-6 py-2.5 bg-[#8B0000] text-white text-sm font-semibold rounded-full hover:bg-[#730000] shadow-md shadow-[#8B0000]/20 transition-all min-w-[120px]"
               >
-                <LayoutDashboard className="w-4 h-4" /> Open App
+                <span key="open-app-nav" className="btn-flip-in flex items-center gap-2">
+                  <LayoutDashboard className="w-4 h-4" /> Open App
+                </span>
               </Link>
             ) : (
               <Link
                 href="/login"
-                className="px-6 py-2.5 bg-[#8B0000] text-white text-sm font-semibold rounded-full hover:bg-[#730000] shadow-md shadow-[#8B0000]/20 transition-all"
+                className="flex items-center justify-center px-6 py-2.5 bg-[#8B0000] text-white text-sm font-semibold rounded-full hover:bg-[#730000] shadow-md shadow-[#8B0000]/20 transition-all min-w-[120px]"
               >
-                Login
+                <span key="login-nav" className="btn-flip-in flex items-center gap-2">
+                  Login
+                </span>
               </Link>
             )}
           </div>
@@ -219,7 +221,7 @@ export default function LandingPage() {
             {/* Big Hero Title */}
             <div className="mb-10">
               <h1 className="text-7xl font-black text-[#3d200a] tracking-tighter drop-shadow-sm">
-                <span>{"Securing "}</span>
+                <span>{"Securing the "}</span>
                 <span className="text-[#8B0000]">Future.</span>
               </h1>
             </div>
@@ -423,6 +425,14 @@ export default function LandingPage() {
     0% { transform: rotateX(-80deg) translateY(-60px); opacity: 0; filter: blur(4px); }
     100% { transform: rotateX(0deg) translateY(0); opacity: 1; filter: blur(0px); }
   }
+  .btn-flip-in {
+    animation: btnFlipIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    transform-origin: 50% 0%;
+  }
+  @keyframes btnFlipIn {
+    0% { transform: rotateX(-90deg) translateY(-10px); opacity: 0; }
+    100% { transform: rotateX(0deg) translateY(0); opacity: 1; }
+  }
 `}} />
 
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-[#3d200a] mb-6 tracking-tight leading-tight max-w-5xl">
@@ -433,23 +443,27 @@ export default function LandingPage() {
               Proactively identify deprecated cryptography algorithms, measure your transition readiness, and effortlessly generate a CertIn-compliant Cryptographic Bill of Materials (CBOM) for your organization from one centralized hub.
             </p>
 
-            {isPending ? (
-              <div className="w-[180px] h-[60px] bg-[#8B0000]/10 animate-pulse rounded-xl" />
-            ) : isLoggedIn ? (
-              <Link
-                href="/app"
-                className="group flex items-center justify-center gap-2 px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all"
-              >
-                <LayoutDashboard className="w-5 h-5" /> Open App <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            ) : (
-              <Link
-                href="/signup"
-                className="group flex items-center justify-center gap-2 px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all"
-              >
-                Get Started <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            )}
+            <div className="[perspective:1000px] flex items-center justify-center min-h-[64px]">
+              {isLoggedIn ? (
+                <Link
+                  href="/app"
+                  className="group flex items-center justify-center px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all min-w-[220px]"
+                >
+                  <span key="open-app-hero" className="btn-flip-in flex items-center gap-2">
+                    <LayoutDashboard className="w-5 h-5" /> Open App <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  </span>
+                </Link>
+              ) : (
+                <Link
+                  href="/signup"
+                  className="group flex items-center justify-center px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all min-w-[220px]"
+                >
+                  <span key="signup-hero" className="btn-flip-in flex items-center gap-2">
+                    Get Started <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  </span>
+                </Link>
+              )}
+            </div>
           </section>
         </div>
 
@@ -618,12 +632,7 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {isPending ? (
-              <div className="flex flex-col sm:flex-row items-center gap-4 w-full justify-center">
-                <div className="w-full sm:w-[220px] h-[52px] bg-[#8B0000]/10 animate-pulse rounded-xl" />
-                <div className="w-full sm:w-[120px] h-[52px] bg-white/40 animate-pulse rounded-xl" />
-              </div>
-            ) : isLoggedIn ? (
+            {isLoggedIn ? (
               <Link
                 href="/app"
                 className="group flex items-center justify-center gap-2 px-8 py-3.5 bg-[#8B0000] text-white rounded-xl font-semibold shadow-xl shadow-[#8B0000]/30 hover:bg-[#730000] hover:-translate-y-0.5 transition-all"
