@@ -154,7 +154,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-2">
             <Shield className="w-6 h-6 text-[goldenrod]" strokeWidth={3} fill="#8B0000" />
             <div>
-              <span className="text-xl font-extrabold text-[#5f3512] tracking-tight whitespace-nowrap">
+              <span className="text-2xl font-extrabold text-[#5f3512] tracking-tight whitespace-nowrap">
                 Quant<span className="text-[#8B0000]">Warden</span>
               </span>
             </div>
@@ -439,27 +439,29 @@ export default function LandingPage() {
               A Post-Quantum Cryptography <br/> Scanner for Your Team
             </h2>
 
-            <p className="text-sm md:text-md text-[#8a5d33] mb-12 max-w-3xl font-normal leading-relaxed">
+            <p className="text-sm md:text-md text-[#8a5d33] mb-8 max-w-3xl font-normal leading-relaxed">
               Proactively identify deprecated cryptography algorithms, measure your transition readiness, and effortlessly generate a CertIn-compliant Cryptographic Bill of Materials (CBOM) for your organization from one centralized hub.
             </p>
 
-            <div className="[perspective:1000px] flex items-center justify-center min-h-[64px]">
+            <div className="perspective-[1000px] flex items-center justify-center min-h-12">
               {isLoggedIn ? (
                 <Link
                   href="/app"
-                  className="group flex items-center justify-center px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all min-w-[220px]"
+                  className="group flex items-center justify-center px-6 py-3 bg-[#8B0000] text-white rounded-full text-md font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all"
                 >
                   <span key="open-app-hero" className="btn-flip-in flex items-center gap-2">
-                    <LayoutDashboard className="w-5 h-5" /> Open App <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    <LayoutDashboard className="w-5 h-5" /> Open App 
+                    {/* <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /> */}
                   </span>
                 </Link>
               ) : (
                 <Link
                   href="/signup"
-                  className="group flex items-center justify-center px-8 py-4 bg-[#8B0000] text-white rounded-xl text-lg font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all min-w-[220px]"
+                  className="group flex items-center justify-center px-6 py-3 bg-[#8B0000] text-white rounded-full text-md font-bold shadow-xl shadow-[#8B0000]/30 hover:-translate-y-1 hover:bg-[#730000] transition-all"
                 >
                   <span key="signup-hero" className="btn-flip-in flex items-center gap-2">
-                    Get Started <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    Get Started 
+                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </span>
                 </Link>
               )}
@@ -469,8 +471,8 @@ export default function LandingPage() {
 
         {/* Features Matrix Component */}
         <section className="max-w-7xl mx-auto px-6 sm:px-12 py-20 relative">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-extrabold text-[#3d200a]">Pioneering Post-Quantum Security</h2>
+          <div className="text-center mb-8">
+            <h2 className="text-3xl md:text-5xl font-extrabold text-[#3d200a]">Pioneering Post-Quantum Security</h2>
             <div className="w-16 h-1.5 bg-[#8B0000] mx-auto mt-4 rounded-full" />
           </div>
 
