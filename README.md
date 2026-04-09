@@ -2,58 +2,78 @@
 
 Next.js control plane for QuantWarden.
 
-This app is responsible for:
-- organization UI
-- asset explorer and overview
-- scan creation and scheduling
-- live scan activity streaming over SSE
+This repo handles:
+- authentication and organization UI
+- asset management, overview, and explorer
+- manual scan creation
+- scheduled scan creation
+- live scan activity over SSE
 
-Long-running scan execution is handled by the dedicated worker in:
-- [worker/README.md](/Users/maasir/Projects/quantwarden-ui/worker/README.md)
+Long-running scan execution does not run inside Vercel. It is handled by the dedicated worker container documented in [`worker/README.md`](worker/README.md).
 
 ## Architecture
 
+Production setup:
 - `Vercel`
-  - hosts this Next.js app
-  - users trigger manual scans and create schedules here
-  - app writes scan batches and schedules into Neon
-  - app subscribes to DB-backed SSE activity updates
+  - runs this Next.js app
+  - users click manual scans and create schedules here
+  - the app writes scan batches and schedules into Neon
+  - the app subscribes to scan activity from the database through SSE
 - `Neon Postgres`
-  - stores assets, batches, scans, schedules, and progress state
+  - stores assets, batches, scan items, schedules, and progress state
 - `Azure VM`
-  - runs backend scan services (`openssl-api`, `nmap-api`, etc.)
+  - runs backend scan services such as `openssl-api`, `nmap-api`, and `subfinder-api`
   - runs the QuantWarden scan worker container
 
-The frontend and worker are not directly coupled in-process.
-They coordinate through:
+The app and worker coordinate through:
 - shared Neon database state
-- a small signed worker wake endpoint for instant manual scans
+- a signed wake endpoint for instant manual scans
 
-## Deployment Contract
+## Repo Setup
 
-### App-side envs on Vercel
+From your local machine:
 
-Set these in the app deployment:
+```bash
+git clone <your-repo-url>
+cd quantwarden-ui
+npm install
+```
+
+Run the app locally:
+
+```bash
+npm run dev
+```
+
+## App Environment
+
+For local app development, use your normal root `.env` or `.env.local`.
+
+For the deployed app on Vercel, set:
 
 ```env
 SCAN_WORKER_WAKE_URL=https://your-vm-or-proxy.example.com/internal/wake
-SCAN_WORKER_WAKE_SECRET=replace-with-the-same-long-random-secret-used-by-the-worker
+SCAN_WORKER_WAKE_SECRET=replace-with-the-same-secret-used-by-the-worker
 SCAN_WORKER_WAKE_TIMEOUT_MS=1500
 ```
 
-Purpose:
+Meaning:
 - `SCAN_WORKER_WAKE_URL`
-  - endpoint the app calls after creating a manual scan batch
+  - app calls this after a manual batch is created
 - `SCAN_WORKER_WAKE_SECRET`
   - bearer token shared with the worker
 - `SCAN_WORKER_WAKE_TIMEOUT_MS`
-  - short timeout for the wake request; batch creation still succeeds if wake fails
+  - short timeout for the wake request; the batch still succeeds if wake fails
 
-### Worker-side envs on the VM
+## Worker Environment on the VM
 
-Create this file on the VM in the repo root:
+On the VM, in the repo root, create:
 
-- `/path/to/quantwarden-ui/.env.worker`
+```bash
+cp .env.worker.example .env.worker
+```
+
+Then fill in `.env.worker`.
 
 Recommended values:
 
@@ -63,7 +83,7 @@ OPENSSL_API_URL=http://openssl-api:8020
 NMAP_API_URL=http://nmap-api:8010
 SCAN_WORKER_PORT=8088
 SCAN_WORKER_HEALTH_PORT=8089
-SCAN_WORKER_WAKE_SECRET=replace-with-the-same-long-random-secret-used-by-the-app
+SCAN_WORKER_WAKE_SECRET=replace-with-the-same-secret-used-by-the-app
 OPENSSL_API_TIMEOUT_SECONDS=3
 OPENSSL_API_REQUEST_TIMEOUT_MS=15000
 OPENSSL_API_PROBE_BATCH_SIZE=10
@@ -75,26 +95,90 @@ SCAN_WORKER_ACTIVE_GRACE_MS=60000
 SCAN_WORKER_ACTIVE_ORG_LIMIT=100
 ```
 
-Behavior:
-- manual scans wake the worker immediately and start quickly if the org is idle
-- scheduled scans are allowed to wait up to `30 minutes`
+Behavior of those defaults:
+- manual scans start quickly when the org is idle
+- scheduled scans may wait up to about 30 minutes
 - active scans still get frequent progress updates
 
-## Worker Startup
+## Worker Deployment on the VM
 
-From the repo root on the VM:
+The worker runs best as Docker on the same VM as your backend scan services.
+
+Fresh VM setup:
 
 ```bash
+git clone <your-repo-url>
+cd quantwarden-ui
+git checkout <branch-name>
 cp .env.worker.example .env.worker
 # edit .env.worker
 docker compose -f worker/docker-compose.worker.yml up -d --build
 ```
 
-The worker guide lives here:
-- [worker/README.md](/Users/maasir/Projects/quantwarden-ui/worker/README.md)
-
-Health check example:
+If the repo already exists on the VM:
 
 ```bash
-curl http://your-vm-or-proxy.example.com:8089/healthz
+cd quantwarden-ui
+git fetch origin
+git checkout <branch-name>
+git pull origin <branch-name>
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml up -d --build
 ```
+
+## Verification
+
+Worker health:
+
+```bash
+curl http://127.0.0.1:8089/healthz
+curl http://<vm-ip>:8089/healthz
+```
+
+Manual wake test:
+
+```bash
+curl -i -X POST "http://<vm-ip>:8088/internal/wake" \
+  -H "Authorization: Bearer <SCAN_WORKER_WAKE_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual_test","orgId":"test-org"}'
+```
+
+Container status:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml ps
+docker compose -f worker/docker-compose.worker.yml logs -f
+```
+
+## Updating the VM After Code Changes
+
+From the repo root on the VM:
+
+```bash
+git fetch origin
+git checkout <branch-name>
+git pull origin <branch-name>
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml up -d --build
+```
+
+If only the env file changed:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml up -d
+```
+
+If you want a clean rebuild:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml build --no-cache
+docker compose -f worker/docker-compose.worker.yml up -d
+```
+
+## More Detail
+
+The worker lifecycle, ports, control endpoints, and VM operational commands are documented in:
+- [`worker/README.md`](worker/README.md)
