@@ -40,6 +40,9 @@ Optional tuning:
 - `SCAN_WORKER_SCHEDULER_TICK_MS`
 - `SCAN_WORKER_ACTIVE_ORG_LIMIT`
 
+Example worker env template:
+- [.env.worker.example](/Users/maasir/Projects/quantwarden-ui/.env.worker.example)
+
 ## Local Development
 
 From the repo root:
@@ -88,6 +91,20 @@ node worker/bootstrap.cjs
 
 If your Azure VM already runs the backend scan services through Docker, this is the cleaner deployment path.
 
+### Preferred Env File Setup
+
+On the VM, in the repo root:
+
+```bash
+cp .env.worker.example .env.worker
+```
+
+Then fill in the real values in:
+
+- `/path/to/quantwarden-ui/.env.worker`
+
+This keeps the worker secrets outside the image and makes startup commands short.
+
 Build the worker image from this repo root:
 
 ```bash
@@ -100,12 +117,26 @@ Then run it:
 docker run -d \
   --name quantwarden-scan-worker \
   --restart unless-stopped \
+  --env-file .env.worker \
   -e NODE_ENV=production \
-  -e DATABASE_URL="$DATABASE_URL" \
-  -e OPENSSL_API_URL="$OPENSSL_API_URL" \
-  -e NMAP_API_URL="$NMAP_API_URL" \
   quantwarden-scan-worker:latest
 ```
+
+### Simplest Start Command
+
+If you want the simplest VM startup command from this repo:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml up -d --build
+```
+
+That compose file already reads:
+
+- `../.env.worker`
+
+So if you run it from the repo root, the expected env file is:
+
+- `/path/to/quantwarden-ui/.env.worker`
 
 ### Using It Beside Your Backend Monorepo
 
@@ -132,6 +163,8 @@ There is a ready example in:
 - [worker/docker-compose.worker.yml](/Users/maasir/Projects/quantwarden-ui/worker/docker-compose.worker.yml)
 
 That file is intended to be copied or merged into the backend deployment stack, not run as a second full project by itself.
+
+If you copy it into the backend monorepo, update `env_file` to point to that stack's env file location.
 
 ## systemd Service
 
