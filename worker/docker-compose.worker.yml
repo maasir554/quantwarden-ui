@@ -7,7 +7,7 @@ services:
     container_name: quantwarden-scan-worker
     restart: unless-stopped
     ports:
-      - "${SCAN_WORKER_PORT:-8085}:${SCAN_WORKER_PORT:-8085}"
+      - "${SCAN_WORKER_PORT:-8088}:${SCAN_WORKER_PORT:-8088}"
     env_file:
       - ../.env.worker
     environment:

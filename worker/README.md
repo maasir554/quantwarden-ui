@@ -51,7 +51,7 @@ Example worker env template:
 Recommended production values for your current strategy:
 
 ```env
-SCAN_WORKER_PORT=8085
+SCAN_WORKER_PORT=8088
 OPENSSL_API_TIMEOUT_SECONDS=3
 OPENSSL_API_REQUEST_TIMEOUT_MS=15000
 OPENSSL_API_PROBE_BATCH_SIZE=10
@@ -160,7 +160,7 @@ Then run it:
 docker run -d \
   --name quantwarden-scan-worker \
   --restart unless-stopped \
-  -p 8085:8085 \
+  -p 8088:8088 \
   --env-file .env.worker \
   -e NODE_ENV=production \
   quantwarden-scan-worker:latest
@@ -181,6 +181,38 @@ That compose file already reads:
 So if you run it from the repo root, the expected env file is:
 
 - `/path/to/quantwarden-ui/.env.worker`
+
+### Update / Restart on the VM
+
+From the repo root:
+
+Stop and recreate the worker:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml up -d --build
+```
+
+Restart without rebuilding:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml restart
+```
+
+Force a clean rebuild:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml down
+docker compose -f worker/docker-compose.worker.yml build --no-cache
+docker compose -f worker/docker-compose.worker.yml up -d
+```
+
+Check status and logs:
+
+```bash
+docker compose -f worker/docker-compose.worker.yml ps
+docker compose -f worker/docker-compose.worker.yml logs -f
+```
 
 ### Using It Beside Your Backend Monorepo
 

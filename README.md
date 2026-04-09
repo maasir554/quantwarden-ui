@@ -61,7 +61,7 @@ Recommended values:
 DATABASE_URL=postgres://username:password@host/database?sslmode=require
 OPENSSL_API_URL=http://openssl-api:8020
 NMAP_API_URL=http://nmap-api:8010
-SCAN_WORKER_PORT=8085
+SCAN_WORKER_PORT=8088
 SCAN_WORKER_WAKE_SECRET=replace-with-the-same-long-random-secret-used-by-the-app
 OPENSSL_API_TIMEOUT_SECONDS=3
 OPENSSL_API_REQUEST_TIMEOUT_MS=15000

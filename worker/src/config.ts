@@ -27,7 +27,7 @@ export function loadWorkerConfig(): WorkerConfig {
     idleSchedulerTickMs: parseIntEnv("SCAN_WORKER_IDLE_SCHEDULER_TICK_MS", 1800000, { min: 5000, max: 3600000 }),
     activeGraceMs: parseIntEnv("SCAN_WORKER_ACTIVE_GRACE_MS", 60000, { min: 1000, max: 900000 }),
     activeOrgQueryLimit: parseIntEnv("SCAN_WORKER_ACTIVE_ORG_LIMIT", 100, { min: 1, max: 1000 }),
-    controlPort: parseIntEnv("SCAN_WORKER_PORT", 8085, { min: 1, max: 65535 }),
+    controlPort: parseIntEnv("SCAN_WORKER_PORT", 8088, { min: 1, max: 65535 }),
     wakeSecret: process.env.SCAN_WORKER_WAKE_SECRET || "",
   };
 }
