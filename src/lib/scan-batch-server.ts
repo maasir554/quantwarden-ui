@@ -389,6 +389,19 @@ export async function getActiveScanLock(orgId: string) {
   return rows[0];
 }
 
+export async function listOrganizationsWithActiveScanWork(limit = 50) {
+  const rows = await prisma.$queryRawUnsafe<{ organizationId: string }[]>(
+    `SELECT DISTINCT b."organizationId" as "organizationId"
+     FROM "asset_scan_batch" b
+     WHERE b.status IN ('queued', 'running')
+     ORDER BY b."organizationId" ASC
+     LIMIT $1`,
+    limit
+  );
+
+  return rows.map((row) => row.organizationId);
+}
+
 export async function claimNextPendingScan(orgId: string): Promise<ClaimedScanItem | null> {
   const claim = await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(
@@ -468,7 +481,7 @@ export async function claimNextPendingScan(orgId: string): Promise<ClaimedScanIt
         ? MAX_PORT_DISCOVERY_SCAN_CONCURRENCY
         : MAX_OPENSSL_SCAN_CONCURRENCY;
 
-    if ((runningRows[0]?.running || 0) >= engineLimit) {
+    if ((runningRows[0]?.running || 0) > engineLimit) {
       await tx.$executeRawUnsafe(
         `UPDATE "asset_scan" SET status = 'pending' WHERE id = $1`,
         nextClaim.scanId

@@ -39,6 +39,7 @@ model User {
   joinRequests  JoinRequest[]
   initiatedScanBatches AssetScanBatch[] @relation("AssetScanBatchInitiator")
   updatedPortDiscoveryConfigs OrganizationPortDiscoveryConfig[] @relation("OrganizationPortDiscoveryConfigUpdater")
+  createdScanSchedules ScanSchedule[] @relation("ScanScheduleCreator")
 
   @@unique([email])
   @@map("user")
@@ -107,6 +108,8 @@ model Organization {
   roles        Role[]
   assets       Asset[]
   assetScanBatches AssetScanBatch[]
+  scanSchedules ScanSchedule[]
+  scanScheduleRuns ScanScheduleRun[]
   portDiscoveryConfig OrganizationPortDiscoveryConfig?
   nmapAssets   NmapAsset[]
   joinRequests JoinRequest[]
@@ -255,6 +258,52 @@ model OrganizationPortDiscoveryConfig {
   updatedAt        DateTime     @updatedAt
 
   @@map("organization_port_discovery_config")
+}
+
+model ScanSchedule {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUserId String
+  createdBy       User         @relation("ScanScheduleCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  engine          String
+  type            String
+  mode            String
+  frequency       String?
+  interval        Int?
+  runAt           DateTime
+  nextRunAt       DateTime?
+  assetIds        String
+  configSnapshot  String?
+  enabled         Boolean      @default(true)
+  timezone        String?
+  lastRunAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  runs            ScanScheduleRun[]
+
+  @@index([organizationId, enabled, nextRunAt])
+  @@index([createdByUserId])
+  @@map("org_scan_schedule")
+}
+
+model ScanScheduleRun {
+  id            String       @id @default(cuid())
+  scheduleId    String
+  schedule      ScanSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status        String       @default("pending")
+  dueAt         DateTime
+  queuedBatchId String?
+  error         String?
+  createdAt     DateTime     @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+
+  @@index([organizationId, status, dueAt])
+  @@index([scheduleId, dueAt])
+  @@map("org_scan_schedule_run")
 }
 
 model NmapAsset {

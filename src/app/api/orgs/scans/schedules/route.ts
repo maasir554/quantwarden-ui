@@ -1,0 +1,72 @@
+import { NextRequest, NextResponse } from "next/server";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { getOrgScanAccess } from "@/lib/org-scan-permissions";
+import { createScanSchedule, listScanSchedulesForOrganization } from "@/lib/scan-schedule-server";
+
+export async function GET(req: NextRequest) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const orgId = searchParams.get("orgId");
+
+    if (!orgId) {
+      return NextResponse.json({ error: "Missing orgId" }, { status: 400 });
+    }
+
+    const scanAccess = await getOrgScanAccess(orgId, session.user.id);
+    if (!scanAccess) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const schedules = await listScanSchedulesForOrganization(orgId);
+    return NextResponse.json({ schedules });
+  } catch (error) {
+    console.error("List scan schedules error:", error);
+    return NextResponse.json({ error: "Internal Error" }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await req.json().catch(() => null);
+    const orgId = typeof body?.orgId === "string" ? body.orgId : null;
+
+    if (!orgId) {
+      return NextResponse.json({ error: "Missing orgId" }, { status: 400 });
+    }
+
+    const scanAccess = await getOrgScanAccess(orgId, session.user.id);
+    if (!scanAccess?.canScan) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const schedule = await createScanSchedule({
+      organizationId: orgId,
+      createdByUserId: session.user.id,
+      engine: body?.engine,
+      type: body?.type,
+      mode: body?.mode,
+      runAt: body?.runAt,
+      frequency: body?.frequency,
+      interval: body?.interval,
+      assetIds: Array.isArray(body?.assetIds) ? body.assetIds : [],
+      configSnapshot: body?.configSnapshot,
+      timezone: body?.timezone,
+    });
+
+    return NextResponse.json({ schedule }, { status: 201 });
+  } catch (error: any) {
+    console.error("Create scan schedule error:", error);
+    return NextResponse.json({ error: error?.message || "Internal Error" }, { status: 400 });
+  }
+}

@@ -1244,10 +1244,10 @@ export default function ScanActivityMonitor({
                               {showLiveActivityInfoTooltip && (
                                 <div className="absolute left-0 top-8 z-20 w-96 max-w-[min(92vw,24rem)] rounded-xl border border-[#8a5d33]/28 bg-white/95 p-3 text-xs font-medium leading-relaxed text-[#5b3a1f] shadow-xl backdrop-blur-sm">
                                   <p>
-                                    Activity Monitor connects you to the live stream running across the organization, triggered by any authorized team member.
+                                    Activity Monitor connects you to the live organization scan activity stream, including work started manually or by the background scheduler.
                                   </p>
                                   <p className="mt-1">
-                                    When you press Sync, you connect to the live real-time SSE stream of the process. If no scan is going on, the monitor remains idle.
+                                    When you press Sync, you subscribe to the live SSE activity feed. If no scan is currently running, the monitor simply stays idle until new work appears.
                                   </p>
                                 </div>
                               )}
