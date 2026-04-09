@@ -16,6 +16,7 @@ export interface WorkerConfig {
   activeGraceMs: number;
   activeOrgQueryLimit: number;
   controlPort: number;
+  healthPort: number;
   wakeSecret: string;
 }
 
@@ -28,6 +29,7 @@ export function loadWorkerConfig(): WorkerConfig {
     activeGraceMs: parseIntEnv("SCAN_WORKER_ACTIVE_GRACE_MS", 60000, { min: 1000, max: 900000 }),
     activeOrgQueryLimit: parseIntEnv("SCAN_WORKER_ACTIVE_ORG_LIMIT", 100, { min: 1, max: 1000 }),
     controlPort: parseIntEnv("SCAN_WORKER_PORT", 8088, { min: 1, max: 65535 }),
+    healthPort: parseIntEnv("SCAN_WORKER_HEALTH_PORT", 8089, { min: 1, max: 65535 }),
     wakeSecret: process.env.SCAN_WORKER_WAKE_SECRET || "",
   };
 }

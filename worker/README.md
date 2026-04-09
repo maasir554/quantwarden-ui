@@ -31,6 +31,7 @@ Point the worker at the same backing services as the app:
 - `OPENSSL_API_URL`
 - `NMAP_API_URL`
 - `SCAN_WORKER_PORT`
+- `SCAN_WORKER_HEALTH_PORT`
 - `SCAN_WORKER_WAKE_SECRET`
 
 Optional tuning:
@@ -52,6 +53,7 @@ Recommended production values for your current strategy:
 
 ```env
 SCAN_WORKER_PORT=8088
+SCAN_WORKER_HEALTH_PORT=8089
 OPENSSL_API_TIMEOUT_SECONDS=3
 OPENSSL_API_REQUEST_TIMEOUT_MS=15000
 OPENSSL_API_PROBE_BATCH_SIZE=10
@@ -69,11 +71,14 @@ That gives you:
 - frequent progress updates only while active work exists
 
 Worker control endpoints:
-- `GET /healthz`
 - `POST /internal/wake`
 
 `POST /internal/wake` requires:
 - `Authorization: Bearer <SCAN_WORKER_WAKE_SECRET>`
+
+Dedicated health endpoint:
+- `GET http://<worker-host>:<SCAN_WORKER_HEALTH_PORT>/healthz`
+- `GET http://<worker-host>:<SCAN_WORKER_HEALTH_PORT>/`
 
 ## Local Development
 
@@ -161,6 +166,7 @@ docker run -d \
   --name quantwarden-scan-worker \
   --restart unless-stopped \
   -p 8088:8088 \
+  -p 8089:8089 \
   --env-file .env.worker \
   -e NODE_ENV=production \
   quantwarden-scan-worker:latest
@@ -214,6 +220,13 @@ docker compose -f worker/docker-compose.worker.yml ps
 docker compose -f worker/docker-compose.worker.yml logs -f
 ```
 
+Health checks:
+
+```bash
+curl http://127.0.0.1:8089/healthz
+curl http://127.0.0.1:8089/
+```
+
 ### Using It Beside Your Backend Monorepo
 
 The cleanest VM setup is:
@@ -234,6 +247,8 @@ If the backend services and worker run on the same Docker network, prefer contai
 If they are not on the same Docker network, use the reachable VM URLs instead.
 
 If the public app must wake the worker directly, expose the worker port through your reverse proxy or a restricted VM port and point `SCAN_WORKER_WAKE_URL` at that route.
+
+The health port can be exposed separately for liveness checks if you want a simpler probe path than the control port.
 
 ### Example Compose Service
 

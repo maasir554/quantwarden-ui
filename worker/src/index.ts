@@ -23,6 +23,7 @@ let activeUntilMs = 0;
 let executorTickPromise: Promise<void> | null = null;
 let schedulerTickPromise: Promise<void> | null = null;
 let controlServer: http.Server | null = null;
+let healthServer: http.Server | null = null;
 
 function markWorkerActive(reason: string, orgId?: string) {
   const wasActive = isWorkerActive();
@@ -118,15 +119,6 @@ function isAuthorizedWakeRequest(req: IncomingMessage) {
 }
 
 async function handleControlRequest(req: IncomingMessage, res: ServerResponse) {
-  if (req.method === "GET" && req.url === "/healthz") {
-    json(res, 200, {
-      ok: true,
-      mode: isWorkerActive() ? "active" : "idle",
-      runningJobs: runningJobs.size,
-    });
-    return;
-  }
-
   if (req.method === "POST" && req.url === "/internal/wake") {
     if (!config.wakeSecret.trim()) {
       json(res, 503, { error: "Wake endpoint is disabled." });
@@ -164,6 +156,21 @@ async function handleControlRequest(req: IncomingMessage, res: ServerResponse) {
   json(res, 404, { error: "Not found" });
 }
 
+async function handleHealthRequest(req: IncomingMessage, res: ServerResponse) {
+  if (req.method === "GET" && (req.url === "/" || req.url === "/healthz")) {
+    json(res, 200, {
+      ok: true,
+      status: "alive",
+      mode: isWorkerActive() ? "active" : "idle",
+      runningJobs: runningJobs.size,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
+  json(res, 404, { error: "Not found" });
+}
+
 async function startControlServer() {
   await new Promise<void>((resolve, reject) => {
     controlServer = http.createServer((req, res) => {
@@ -185,6 +192,23 @@ async function startControlServer() {
 
   logger.info("Worker control server started.", {
     controlPort: config.controlPort,
+  });
+}
+
+async function startHealthServer() {
+  await new Promise<void>((resolve, reject) => {
+    healthServer = http.createServer((req, res) => {
+      void handleHealthRequest(req, res);
+    });
+
+    healthServer.once("error", reject);
+    healthServer.listen(config.healthPort, "0.0.0.0", () => {
+      resolve();
+    });
+  });
+
+  logger.info("Worker health server started.", {
+    healthPort: config.healthPort,
   });
 }
 
@@ -356,6 +380,11 @@ async function shutdown(signal: string) {
       controlServer?.close(() => resolve());
     }).catch(() => undefined);
   }
+  if (healthServer) {
+    await new Promise<void>((resolve) => {
+      healthServer?.close(() => resolve());
+    }).catch(() => undefined);
+  }
 
   if (runningJobs.size > 0) {
     await Promise.allSettled([...runningJobs.values()]);
@@ -368,6 +397,7 @@ async function shutdown(signal: string) {
 async function main() {
   await ensureScanSchedulingTables();
   await startControlServer();
+  await startHealthServer();
 
   logger.info("Worker started.", {
     activeExecutorTickMs: config.activeExecutorTickMs,
@@ -377,6 +407,7 @@ async function main() {
     activeGraceMs: config.activeGraceMs,
     activeOrgQueryLimit: config.activeOrgQueryLimit,
     controlPort: config.controlPort,
+    healthPort: config.healthPort,
     wakeEndpointEnabled: Boolean(config.wakeSecret.trim()),
   });
 
