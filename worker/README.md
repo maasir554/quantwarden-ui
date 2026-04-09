@@ -30,18 +30,50 @@ Point the worker at the same backing services as the app:
 - `DATABASE_URL`
 - `OPENSSL_API_URL`
 - `NMAP_API_URL`
+- `SCAN_WORKER_PORT`
+- `SCAN_WORKER_WAKE_SECRET`
 
 Optional tuning:
 
 - `OPENSSL_API_TIMEOUT_SECONDS`
 - `OPENSSL_API_REQUEST_TIMEOUT_MS`
 - `OPENSSL_API_PROBE_BATCH_SIZE`
-- `SCAN_WORKER_EXECUTOR_TICK_MS`
-- `SCAN_WORKER_SCHEDULER_TICK_MS`
+- `SCAN_WORKER_ACTIVE_EXECUTOR_TICK_MS`
+- `SCAN_WORKER_ACTIVE_SCHEDULER_TICK_MS`
+- `SCAN_WORKER_IDLE_EXECUTOR_TICK_MS`
+- `SCAN_WORKER_IDLE_SCHEDULER_TICK_MS`
+- `SCAN_WORKER_ACTIVE_GRACE_MS`
 - `SCAN_WORKER_ACTIVE_ORG_LIMIT`
 
 Example worker env template:
 - [.env.worker.example](/Users/maasir/Projects/quantwarden-ui/.env.worker.example)
+
+Recommended production values for your current strategy:
+
+```env
+SCAN_WORKER_PORT=8085
+OPENSSL_API_TIMEOUT_SECONDS=3
+OPENSSL_API_REQUEST_TIMEOUT_MS=15000
+OPENSSL_API_PROBE_BATCH_SIZE=10
+SCAN_WORKER_ACTIVE_EXECUTOR_TICK_MS=1500
+SCAN_WORKER_ACTIVE_SCHEDULER_TICK_MS=10000
+SCAN_WORKER_IDLE_EXECUTOR_TICK_MS=1800000
+SCAN_WORKER_IDLE_SCHEDULER_TICK_MS=1800000
+SCAN_WORKER_ACTIVE_GRACE_MS=60000
+SCAN_WORKER_ACTIVE_ORG_LIMIT=100
+```
+
+That gives you:
+- manual scan wake-up within seconds
+- scheduled scan pickup within about 30 minutes
+- frequent progress updates only while active work exists
+
+Worker control endpoints:
+- `GET /healthz`
+- `POST /internal/wake`
+
+`POST /internal/wake` requires:
+- `Authorization: Bearer <SCAN_WORKER_WAKE_SECRET>`
 
 ## Local Development
 
@@ -105,6 +137,17 @@ Then fill in the real values in:
 
 This keeps the worker secrets outside the image and makes startup commands short.
 
+For near-instant manual scans, configure these app-side environment variables in Vercel:
+
+- `SCAN_WORKER_WAKE_URL`
+- `SCAN_WORKER_WAKE_SECRET`
+- `SCAN_WORKER_WAKE_TIMEOUT_MS`
+
+Example:
+
+- `SCAN_WORKER_WAKE_URL=https://your-vm-or-proxy.example.com/internal/wake`
+- `SCAN_WORKER_WAKE_TIMEOUT_MS=1500`
+
 Build the worker image from this repo root:
 
 ```bash
@@ -117,6 +160,7 @@ Then run it:
 docker run -d \
   --name quantwarden-scan-worker \
   --restart unless-stopped \
+  -p 8085:8085 \
   --env-file .env.worker \
   -e NODE_ENV=production \
   quantwarden-scan-worker:latest
@@ -156,6 +200,8 @@ If the backend services and worker run on the same Docker network, prefer contai
 - `NMAP_API_URL=http://nmap-api:8010`
 
 If they are not on the same Docker network, use the reachable VM URLs instead.
+
+If the public app must wake the worker directly, expose the worker port through your reverse proxy or a restricted VM port and point `SCAN_WORKER_WAKE_URL` at that route.
 
 ### Example Compose Service
 

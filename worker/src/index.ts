@@ -1,3 +1,4 @@
+import http, { IncomingMessage, ServerResponse } from "node:http";
 import { prisma } from "@/lib/prisma";
 import { claimNextPendingScan, listOrganizationsWithActiveScanWork } from "@/lib/scan-batch-server";
 import { runOpenSSLScanItem } from "@/lib/openssl-scan-runner";
@@ -7,19 +8,192 @@ import type { ClaimedScanItem } from "@/lib/scan-batch-server";
 import { loadWorkerConfig } from "./config";
 import { logger } from "./logger";
 
-const config = loadWorkerConfig();
+type LoopName = "executor" | "scheduler";
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const config = loadWorkerConfig();
+const runningJobs = new Map<string, Promise<void>>();
+const loopWakeWaiters: Record<LoopName, Set<() => void>> = {
+  executor: new Set(),
+  scheduler: new Set(),
+};
+const prioritizedOrgIds = new Set<string>();
+
+let shuttingDown = false;
+let activeUntilMs = 0;
+let executorTickPromise: Promise<void> | null = null;
+let schedulerTickPromise: Promise<void> | null = null;
+let controlServer: http.Server | null = null;
+
+function markWorkerActive(reason: string, orgId?: string) {
+  const wasActive = isWorkerActive();
+  activeUntilMs = Math.max(activeUntilMs, Date.now() + config.activeGraceMs);
+  if (orgId) {
+    prioritizedOrgIds.add(orgId);
+  }
+  if (!wasActive || orgId) {
+    logger.info("Worker switched to active mode.", { reason, orgId: orgId || null });
+  }
+  notifyLoop("executor");
+  notifyLoop("scheduler");
 }
 
-const runningJobs = new Map<string, Promise<void>>();
-let shuttingDown = false;
+function isWorkerActive() {
+  return runningJobs.size > 0 || Date.now() < activeUntilMs;
+}
+
+function getLoopTickMs(loop: LoopName) {
+  if (loop === "executor") {
+    return isWorkerActive() ? config.activeExecutorTickMs : config.idleExecutorTickMs;
+  }
+
+  return isWorkerActive() ? config.activeSchedulerTickMs : config.idleSchedulerTickMs;
+}
+
+function waitForNextTick(loop: LoopName, ms: number) {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms);
+    const waiter = () => done();
+
+    function done() {
+      clearTimeout(timer);
+      loopWakeWaiters[loop].delete(waiter);
+      resolve();
+    }
+
+    loopWakeWaiters[loop].add(waiter);
+  });
+}
+
+function notifyLoop(loop: LoopName) {
+  for (const wake of [...loopWakeWaiters[loop]]) {
+    wake();
+  }
+}
+
+function json(res: ServerResponse, statusCode: number, body: unknown) {
+  const payload = JSON.stringify(body);
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(payload).toString(),
+  });
+  res.end(payload);
+}
+
+async function readJsonBody(req: IncomingMessage) {
+  return new Promise<unknown>((resolve, reject) => {
+    let raw = "";
+
+    req.on("data", (chunk) => {
+      raw += chunk.toString();
+      if (raw.length > 8192) {
+        reject(new Error("Request body too large."));
+      }
+    });
+
+    req.on("end", () => {
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error("Invalid JSON body."));
+      }
+    });
+
+    req.on("error", reject);
+  });
+}
+
+function isAuthorizedWakeRequest(req: IncomingMessage) {
+  const expectedSecret = config.wakeSecret.trim();
+  if (!expectedSecret) {
+    return false;
+  }
+
+  const authHeader = req.headers.authorization || "";
+  return authHeader === `Bearer ${expectedSecret}`;
+}
+
+async function handleControlRequest(req: IncomingMessage, res: ServerResponse) {
+  if (req.method === "GET" && req.url === "/healthz") {
+    json(res, 200, {
+      ok: true,
+      mode: isWorkerActive() ? "active" : "idle",
+      runningJobs: runningJobs.size,
+    });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/internal/wake") {
+    if (!config.wakeSecret.trim()) {
+      json(res, 503, { error: "Wake endpoint is disabled." });
+      return;
+    }
+
+    if (!isAuthorizedWakeRequest(req)) {
+      json(res, 401, { error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(req)) as {
+        reason?: string;
+        orgId?: string;
+        batchId?: string;
+      };
+
+      markWorkerActive(body.reason || "manual_wake", body.orgId);
+      void runExecutorTickSafe();
+
+      json(res, 200, {
+        ok: true,
+        mode: "active",
+        orgId: body.orgId || null,
+        batchId: body.batchId || null,
+      });
+      return;
+    } catch (error: any) {
+      json(res, 400, { error: error?.message || "Invalid wake request." });
+      return;
+    }
+  }
+
+  json(res, 404, { error: "Not found" });
+}
+
+async function startControlServer() {
+  await new Promise<void>((resolve, reject) => {
+    controlServer = http.createServer((req, res) => {
+      void handleControlRequest(req, res);
+    });
+
+    controlServer.once("error", reject);
+    controlServer.listen(config.controlPort, "0.0.0.0", () => {
+      resolve();
+    });
+  });
+
+  if (!config.wakeSecret.trim()) {
+    logger.warn("Worker wake endpoint started without a configured secret. Manual wake requests are disabled.", {
+      controlPort: config.controlPort,
+    });
+    return;
+  }
+
+  logger.info("Worker control server started.", {
+    controlPort: config.controlPort,
+  });
+}
 
 async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
   if (runningJobs.has(claimed.scanId)) {
     return;
   }
+
+  markWorkerActive("scan_claimed", orgId);
 
   const job = (async () => {
     try {
@@ -57,16 +231,46 @@ async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
       });
     } finally {
       runningJobs.delete(claimed.scanId);
+      if (runningJobs.size > 0) {
+        markWorkerActive("scan_job_still_running");
+      }
     }
   })();
 
   runningJobs.set(claimed.scanId, job);
 }
 
-async function runExecutorTick() {
-  const orgIds = await listOrganizationsWithActiveScanWork(config.activeOrgQueryLimit);
+function orderedOrgQueue(orgIds: string[]) {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  for (const orgId of prioritizedOrgIds) {
+    if (!seen.has(orgId)) {
+      ordered.push(orgId);
+      seen.add(orgId);
+    }
+  }
 
   for (const orgId of orgIds) {
+    if (!seen.has(orgId)) {
+      ordered.push(orgId);
+      seen.add(orgId);
+    }
+  }
+
+  prioritizedOrgIds.clear();
+  return ordered;
+}
+
+async function runExecutorTick() {
+  const orgIds = await listOrganizationsWithActiveScanWork(config.activeOrgQueryLimit);
+  const orderedOrgIds = orderedOrgQueue(orgIds);
+
+  if (orderedOrgIds.length > 0 || runningJobs.size > 0) {
+    markWorkerActive("active_scan_work_detected");
+  }
+
+  for (const orgId of orderedOrgIds) {
     while (!shuttingDown) {
       const claimed = await claimNextPendingScan(orgId);
       if (!claimed) {
@@ -78,14 +282,49 @@ async function runExecutorTick() {
   }
 }
 
-async function runLoop(name: string, tickMs: number, fn: () => Promise<void>) {
-  while (!shuttingDown) {
-    const startedAt = Date.now();
+async function runExecutorTickSafe() {
+  if (executorTickPromise) {
+    return executorTickPromise;
+  }
 
+  executorTickPromise = (async () => {
+    try {
+      await runExecutorTick();
+    } finally {
+      executorTickPromise = null;
+    }
+  })();
+
+  return executorTickPromise;
+}
+
+async function runSchedulerTick() {
+  await runSchedulerMaintenanceCycle();
+  notifyLoop("executor");
+}
+
+async function runSchedulerTickSafe() {
+  if (schedulerTickPromise) {
+    return schedulerTickPromise;
+  }
+
+  schedulerTickPromise = (async () => {
+    try {
+      await runSchedulerTick();
+    } finally {
+      schedulerTickPromise = null;
+    }
+  })();
+
+  return schedulerTickPromise;
+}
+
+async function runLoop(loop: LoopName, fn: () => Promise<void>) {
+  while (!shuttingDown) {
     try {
       await fn();
     } catch (error: any) {
-      logger.error(`${name} loop failed.`, {
+      logger.error(`${loop} loop failed.`, {
         message: error?.message || String(error),
       });
     }
@@ -94,8 +333,7 @@ async function runLoop(name: string, tickMs: number, fn: () => Promise<void>) {
       break;
     }
 
-    const elapsed = Date.now() - startedAt;
-    await sleep(Math.max(250, tickMs - elapsed));
+    await waitForNextTick(loop, getLoopTickMs(loop));
   }
 }
 
@@ -105,10 +343,19 @@ async function shutdown(signal: string) {
   }
 
   shuttingDown = true;
+  notifyLoop("executor");
+  notifyLoop("scheduler");
+
   logger.warn("Shutdown requested.", {
     signal,
     runningJobs: runningJobs.size,
   });
+
+  if (controlServer) {
+    await new Promise<void>((resolve) => {
+      controlServer?.close(() => resolve());
+    }).catch(() => undefined);
+  }
 
   if (runningJobs.size > 0) {
     await Promise.allSettled([...runningJobs.values()]);
@@ -120,11 +367,17 @@ async function shutdown(signal: string) {
 
 async function main() {
   await ensureScanSchedulingTables();
+  await startControlServer();
 
   logger.info("Worker started.", {
-    executorTickMs: config.executorTickMs,
-    schedulerTickMs: config.schedulerTickMs,
+    activeExecutorTickMs: config.activeExecutorTickMs,
+    activeSchedulerTickMs: config.activeSchedulerTickMs,
+    idleExecutorTickMs: config.idleExecutorTickMs,
+    idleSchedulerTickMs: config.idleSchedulerTickMs,
+    activeGraceMs: config.activeGraceMs,
     activeOrgQueryLimit: config.activeOrgQueryLimit,
+    controlPort: config.controlPort,
+    wakeEndpointEnabled: Boolean(config.wakeSecret.trim()),
   });
 
   process.on("SIGINT", () => {
@@ -145,11 +398,11 @@ async function main() {
   });
 
   await Promise.all([
-    runLoop("scheduler", config.schedulerTickMs, async () => {
-      await runSchedulerMaintenanceCycle();
+    runLoop("scheduler", async () => {
+      await runSchedulerTickSafe();
     }),
-    runLoop("executor", config.executorTickMs, async () => {
-      await runExecutorTick();
+    runLoop("executor", async () => {
+      await runExecutorTickSafe();
     }),
   ]);
 }

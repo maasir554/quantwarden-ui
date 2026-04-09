@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { getOrgScanAccess } from "@/lib/org-scan-permissions";
 import { getOrgScanActivity } from "@/lib/scan-batch-server";
 import { createScanBatch, isCreateScanBatchFailure } from "@/lib/scan-batch-create";
+import { notifyScanWorkerOfManualBatch } from "@/lib/scan-worker-wake";
 import type { ScanBatchType, ScanEngine } from "@/lib/scan-activity-types";
 
 interface CreateBatchBody {
@@ -71,7 +72,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const activity = await getOrgScanActivity(orgId, scanAccess.canScan);
+    const [activity, wakeResult] = await Promise.all([
+      getOrgScanActivity(orgId, scanAccess.canScan),
+      notifyScanWorkerOfManualBatch({
+        orgId,
+        batchId: result.batchId,
+      }),
+    ]);
+
+    if (!wakeResult.ok && !wakeResult.skipped) {
+      console.warn("Worker wake request failed after manual batch creation:", {
+        orgId,
+        batchId: result.batchId,
+        error: wakeResult.error,
+        status: wakeResult.status,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       batchId: result.batchId,
