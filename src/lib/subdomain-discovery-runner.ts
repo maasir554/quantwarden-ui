@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { refreshScanBatch } from "@/lib/scan-batch-server";
 
 function getAssetType(value: string): "domain" | "ip" | "unknown" {
   const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -21,18 +22,10 @@ export interface RunSubdomainDiscoveryItemInput {
  * 1. Calls the Subfinder API for the root domain
  * 2. Upserts discovered subdomains as leaf asset rows
  * 3. Marks the scan item completed (or failed on error)
- * 4. Updates batch aggregate counters
+ * 4. Refreshes the batch aggregate counters via refreshScanBatch
  */
 export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItemInput): Promise<void> {
   const { orgId, assetId, scanId, batchId } = input;
-  const now = new Date();
-
-  // Mark scan item as running
-  await prisma.$executeRawUnsafe(
-    `UPDATE "asset_scan" SET status = 'running', "startedAt" = $1 WHERE id = $2`,
-    now,
-    scanId
-  );
 
   // Fetch the root domain value
   const assetRows = await prisma.$queryRawUnsafe<{ value: string }[]>(
@@ -42,7 +35,7 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
   );
 
   if (assetRows.length === 0) {
-    await markScanFailed(scanId, batchId, "Asset not found", now);
+    await markScanFailed(scanId, batchId, "Asset not found");
     return;
   }
 
@@ -75,7 +68,7 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
       else if (Array.isArray(obj.result)) subdomains = obj.result as string[];
     }
   } catch (err: any) {
-    await markScanFailed(scanId, batchId, `Subfinder failed: ${err?.message ?? String(err)}`, now);
+    await markScanFailed(scanId, batchId, `Subfinder failed: ${err?.message ?? String(err)}`);
     return;
   }
 
@@ -83,13 +76,15 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
   const uniqueSubs = [...new Set(subdomains)]
     .filter((s) => typeof s === "string" && s.trim().length > 0 && s !== domain);
 
+  const now = new Date();
+
   // Upsert discovered subdomains as leaf assets
   for (const sub of uniqueSubs) {
     try {
       await prisma.$executeRawUnsafe(
         `INSERT INTO "asset" (id, value, type, "isRoot", "organizationId", verified, "openPorts", "createdAt", "parentId")
          VALUES ($1, $2, $3, false, $4, false, $5, $6, $7)
-         ON CONFLICT (value, "organizationId") DO NOTHING`,
+         ON CONFLICT ("organizationId", value) DO NOTHING`,
         crypto.randomUUID(),
         sub,
         getAssetType(sub),
@@ -110,52 +105,31 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
     assetId
   );
 
-  // Mark scan item completed
+  // Mark scan item completed — store discovered count in resultData
   await prisma.$executeRawUnsafe(
-    `UPDATE "asset_scan" SET status = 'completed', "completedAt" = $1 WHERE id = $2`,
+    `UPDATE "asset_scan"
+     SET status = 'completed', "resultData" = $1, "completedAt" = $2
+     WHERE id = $3
+       AND status IN ('pending', 'running')`,
+    JSON.stringify({ discoveredCount: uniqueSubs.length, subdomains: uniqueSubs }),
     now,
     scanId
   );
 
-  // Update batch aggregate counters
-  await updateBatchCounters(batchId);
+  // Refresh batch counters
+  await refreshScanBatch(batchId);
 }
 
-async function markScanFailed(scanId: string, batchId: string, error: string, now: Date): Promise<void> {
+async function markScanFailed(scanId: string, batchId: string, error: string): Promise<void> {
+  const now = new Date();
   await prisma.$executeRawUnsafe(
-    `UPDATE "asset_scan" SET status = 'failed', "completedAt" = $1, error = $2 WHERE id = $3`,
+    `UPDATE "asset_scan"
+     SET status = 'failed', "resultData" = $1, "completedAt" = $2
+     WHERE id = $3
+       AND status IN ('pending', 'running')`,
+    JSON.stringify({ error }),
     now,
-    error,
     scanId
   );
-  await updateBatchCounters(batchId);
-}
-
-async function updateBatchCounters(batchId: string): Promise<void> {
-  // Recompute completedAssets, failedAssets, and batch status from scan items
-  await prisma.$executeRawUnsafe(`
-    UPDATE "asset_scan_batch" b
-    SET
-      "completedAssets" = counts.completed,
-      "failedAssets"    = counts.failed,
-      status = CASE
-        WHEN counts.pending + counts.running = 0 AND counts.failed > 0 AND counts.completed = 0 THEN 'failed'
-        WHEN counts.pending + counts.running = 0 THEN 'completed'
-        ELSE b.status
-      END,
-      "completedAt" = CASE
-        WHEN counts.pending + counts.running = 0 THEN NOW()
-        ELSE b."completedAt"
-      END
-    FROM (
-      SELECT
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN status = 'running'   THEN 1 ELSE 0 END) AS running
-      FROM "asset_scan"
-      WHERE "batchId" = $1
-    ) counts
-    WHERE b.id = $1
-  `, batchId);
+  await refreshScanBatch(batchId);
 }

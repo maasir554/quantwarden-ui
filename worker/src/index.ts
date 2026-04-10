@@ -267,6 +267,25 @@ async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
         engine: claimed.engine,
         message: error?.message || String(error),
       });
+
+      // Safety net: mark scan failed + refresh batch so it doesn't stay stuck
+      try {
+        await prisma.$executeRawUnsafe(
+          `UPDATE "asset_scan"
+           SET status = 'failed', "resultData" = $1, "completedAt" = $2
+           WHERE id = $3 AND status IN ('pending', 'running')`,
+          JSON.stringify({ error: error?.message || "Unexpected worker error" }),
+          new Date(),
+          claimed.scanId
+        );
+        const { refreshScanBatch } = await import("@/lib/scan-batch-server");
+        await refreshScanBatch(claimed.batchId);
+      } catch (cleanupErr: any) {
+        logger.warn("Failed to mark scan as failed after error.", {
+          scanId: claimed.scanId,
+          message: cleanupErr?.message || String(cleanupErr),
+        });
+      }
     } finally {
       runningJobs.delete(claimed.scanId);
       refreshActiveWindow(orgId);
@@ -313,7 +332,57 @@ function orderedOrgQueue(orgIds: string[]) {
   return ordered;
 }
 
+async function recoverStaleScanItems() {
+  // Find scan items stuck in 'running' for over 5 minutes that this worker isn't actively processing.
+  // This handles: worker crashes, old code bugs, restarts, etc.
+  const STALE_THRESHOLD_MINUTES = 5;
+  try {
+    const staleRows = await prisma.$queryRawUnsafe<{ id: string; batchId: string }[]>(
+      `SELECT s.id, s."batchId" as "batchId"
+       FROM "asset_scan" s
+       INNER JOIN "asset_scan_batch" b ON b.id = s."batchId"
+       WHERE s.status = 'running'
+         AND b.status IN ('queued', 'running')
+         AND s."createdAt" < NOW() - INTERVAL '${STALE_THRESHOLD_MINUTES} minutes'
+       LIMIT 50`
+    );
+
+    const staleScanIds = staleRows.filter((row) => !runningJobs.has(row.id));
+    if (staleScanIds.length === 0) return;
+
+    logger.warn("Recovering stale running scans.", { count: staleScanIds.length });
+
+    const affectedBatchIds = new Set<string>();
+    for (const row of staleScanIds) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "asset_scan"
+         SET status = 'failed', "resultData" = $1, "completedAt" = $2
+         WHERE id = $3 AND status = 'running'`,
+        JSON.stringify({ error: "Scan timed out or worker crashed. Marked as failed by recovery." }),
+        new Date(),
+        row.id
+      );
+      affectedBatchIds.add(row.batchId);
+    }
+
+    const { refreshScanBatch } = await import("@/lib/scan-batch-server");
+    for (const batchId of affectedBatchIds) {
+      await refreshScanBatch(batchId);
+    }
+
+    logger.info("Stale scan recovery complete.", {
+      scansRecovered: staleScanIds.length,
+      batchesRefreshed: affectedBatchIds.size,
+    });
+  } catch (err: any) {
+    logger.warn("Stale scan recovery failed.", { message: err?.message || String(err) });
+  }
+}
+
 async function runExecutorTick() {
+  // Recover any scans stuck in 'running' from previous crashes / bugs
+  await recoverStaleScanItems();
+
   const orgIds = await listOrganizationsWithActiveScanWork(config.activeOrgQueryLimit);
   const orderedOrgIds = orderedOrgQueue(orgIds);
 

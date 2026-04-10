@@ -482,5 +482,24 @@ nextjs-portal {
   75% { transform: translateX(-4px); }
 }
 
+/* ─── Subdomain Discovery Row Shimmer ─── */
+@keyframes subdomain-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
 
+.subdomain-discovery-row-active {
+  background-color: rgba(139, 0, 0, 0.022);
+}
 
+.subdomain-shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(139, 0, 0, 0.045) 25%,
+    rgba(139, 0, 0, 0.08) 50%,
+    rgba(139, 0, 0, 0.045) 75%,
+    transparent 100%
+  );
+  animation: subdomain-shimmer 2.4s ease-in-out infinite;
+}

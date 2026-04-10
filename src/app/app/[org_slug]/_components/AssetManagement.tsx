@@ -465,6 +465,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
         .map((item) => item.assetId)
     )
   );
+  const activeSubdomainDiscoveryBatches = (activity?.activeBatches || []).filter((batch) => batch.engine === "subdomainDiscovery");
+  const activeSubdomainDiscoveryAssetIds = new Set(
+    activeSubdomainDiscoveryBatches.flatMap((batch) =>
+      batch.items
+        .filter((item) => item.status === "pending" || item.status === "running")
+        .map((item) => item.assetId)
+    )
+  );
   const isCreatingPortDiscoveryBatch = pendingBatchEngine === "portDiscovery" && pendingBatchType !== null;
   const portDiscoveryLocked = Boolean(activity?.lock.active);
   const scannableAssets = [...rootAssets, ...leafAssets].filter(
@@ -1444,11 +1452,17 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     const Icon = getAssetIcon(asset.type);
     const isDnsExpired = asset.scanStatus === "expired" || asset.portDiscoveryStatus === "expired";
     const isPortDiscoveryRunning = activePortDiscoveryAssetIds.has(asset.id);
+    const isSubdomainDiscoveryRunning = activeSubdomainDiscoveryAssetIds.has(asset.id);
     return (
       <div
         key={asset.id}
-        className="group flex items-center justify-between border-b border-dotted border-[#8B0000]/20 px-4 py-3 transition-colors hover:bg-[#8B0000]/[0.035] last:border-b-0"
+        className={`group relative flex items-center justify-between border-b border-dotted border-[#8B0000]/20 px-4 py-3 transition-colors hover:bg-[#8B0000]/[0.035] last:border-b-0 overflow-hidden ${
+          isSubdomainDiscoveryRunning ? "subdomain-discovery-row-active" : ""
+        }`}
       >
+        {isSubdomainDiscoveryRunning && (
+          <div className="pointer-events-none absolute inset-0 subdomain-shimmer-bg" />
+        )}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
             asset.type === "domain" 
@@ -1482,6 +1496,11 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               {asset.statusMessage && (
                 <span className="text-[9px] font-bold text-[#8B0000] animate-pulse max-w-[120px] truncate">
                   {asset.statusMessage}
+                </span>
+              )}
+              {!asset.statusMessage && isSubdomainDiscoveryRunning && (
+                <span className="text-[9px] font-bold text-[#8B0000] animate-pulse">
+                  Discovering subdomains...
                 </span>
               )}
             </div>
