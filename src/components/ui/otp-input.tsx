@@ -130,6 +130,8 @@ export default function OtpInput({ email, onVerified, onBack, onResend }: OtpInp
       setCountdown(600);
       setOtp(Array(6).fill(""));
       inputsRef.current[0]?.focus();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to resend the verification code.");
     } finally {
       setResending(false);
     }

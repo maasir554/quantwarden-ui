@@ -344,6 +344,13 @@ export async function ensureScanSchedulingTables() {
     CREATE UNIQUE INDEX IF NOT EXISTS "org_scan_schedule_run_schedule_due_unique_idx"
       ON "org_scan_schedule_run" ("scheduleId", "dueAt");
   `);
+
+  // Add source column to asset_scan_batch if it doesn't exist yet.
+  // This is idempotent and safe across all environments.
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "asset_scan_batch"
+    ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'
+  `);
 }
 
 export async function listScanSchedulesForOrganization(organizationId: string) {
@@ -558,6 +565,27 @@ export async function deleteScanSchedule(scheduleId: string, organizationId: str
   );
 
   return result > 0;
+}
+
+export async function cancelPendingScheduleRun(runId: string, organizationId: string) {
+  await ensureScanSchedulingTables();
+
+  const now = new Date();
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE "org_scan_schedule_run"
+     SET status = 'cancelled',
+         error = COALESCE(error, 'Scheduled scan cancelled by user.'),
+         "completedAt" = COALESCE("completedAt", $3)
+     WHERE id = $1
+       AND "organizationId" = $2
+       AND status = 'pending'
+     RETURNING id`,
+    runId,
+    organizationId,
+    now
+  );
+
+  return rows[0] ?? null;
 }
 
 export async function enqueueDueScheduleRuns(now = new Date()) {

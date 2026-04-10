@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type {
   OrgScanActivityPayload,
   ScanActivityBatch,
+  ScanBatchSource,
   ScanEngine,
   ScanHistoryCategory,
   ScanActivityItem,
@@ -9,10 +10,12 @@ import type {
   ScanBatchType,
   ScanFailureEntry,
   ScanHistoryEntry,
+  ScanUpcomingEntry,
 } from "@/lib/scan-activity-types";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 import { deriveOpenSSLAssetRollup } from "@/lib/openssl-port-rollup";
 import { isPortDiscoveryTimeoutResult, parsePortDiscoveryResponse } from "@/lib/port-discovery";
+import { ensureScanSchedulingTables } from "@/lib/scan-schedule-server";
 
 export const MAX_OPENSSL_SCAN_CONCURRENCY = 5;
 export const MAX_PORT_DISCOVERY_SCAN_CONCURRENCY = 2;
@@ -22,6 +25,7 @@ interface BatchRow {
   organizationId: string;
   engine: ScanEngine;
   type: ScanBatchType;
+  source: string | null;
   status: ScanBatchStatus;
   configSnapshot: string | null;
   totalAssets: number;
@@ -30,6 +34,22 @@ interface BatchRow {
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
+  initiatedById: string | null;
+  initiatedByName: string | null;
+  initiatedByEmail: string | null;
+}
+
+interface UpcomingQueueRow {
+  id: string;
+  scheduleId: string;
+  organizationId: string;
+  engine: string;
+  type: string;
+  status: string;
+  dueAt: Date;
+  createdAt: Date;
+  queuedBatchId: string | null;
+  error: string | null;
   initiatedById: string | null;
   initiatedByName: string | null;
   initiatedByEmail: string | null;
@@ -81,6 +101,12 @@ function toPercentComplete(completedAssets: number, failedAssets: number, totalA
   return Math.min(100, Math.round(((completedAssets + failedAssets) / totalAssets) * 100));
 }
 
+function normalizeBatchSource(source: string | null | undefined): ScanBatchSource {
+  if (source === "scheduled") return "scheduled";
+  if (source === "automated") return "automated";
+  return "manual";
+}
+
 function toBatch(batch: BatchRow, scans: ScanRow[]): ScanActivityBatch {
   const items: ScanActivityItem[] = scans.map((scan) => ({
     id: scan.id,
@@ -105,6 +131,7 @@ function toBatch(batch: BatchRow, scans: ScanRow[]): ScanActivityBatch {
     organizationId: batch.organizationId,
     engine: batch.engine,
     type: batch.type,
+    source: normalizeBatchSource(batch.source),
     status: batch.status,
     totalAssets,
     completedAssets,
@@ -223,6 +250,7 @@ function toHistoryEntry(batch: ScanActivityBatch, scans: ScanRow[]): ScanHistory
     batchId: batch.id,
     engine: batch.engine,
     type: batch.type,
+    source: batch.source,
     status: batch.status,
     createdAt: batch.createdAt,
     startedAt: batch.startedAt,
@@ -235,6 +263,29 @@ function toHistoryEntry(batch: ScanActivityBatch, scans: ScanRow[]): ScanHistory
     durationSeconds,
     items,
     failures,
+  };
+}
+
+function toUpcomingQueueEntry(row: UpcomingQueueRow): ScanUpcomingEntry {
+  return {
+    id: row.id,
+    scheduleId: row.scheduleId,
+    organizationId: row.organizationId,
+    engine: row.engine === "portDiscovery" ? "portDiscovery" : "openssl",
+    type: row.type === "single" || row.type === "group" || row.type === "full" ? row.type : "full",
+    source: "scheduled",
+    status: row.status === "queued" ? "queued" : "pending",
+    dueAt: row.dueAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    queuedBatchId: row.queuedBatchId,
+    error: row.error,
+    initiatedBy: row.initiatedById
+      ? {
+          id: row.initiatedById,
+          name: row.initiatedByName,
+          email: row.initiatedByEmail,
+        }
+      : null,
   };
 }
 
@@ -274,6 +325,7 @@ export async function refreshScanBatch(batchId: string) {
         b."organizationId",
         b.engine,
         b.type,
+        NULL::text as source,
         b.status,
         b."configSnapshot",
         b."totalAssets",
@@ -359,12 +411,15 @@ export async function refreshOpenSSLAssetState(assetId: string, orgId: string) {
 }
 
 export async function getActiveScanLock(orgId: string) {
+  await ensureScanSchedulingTables();
+
   const rows = await prisma.$queryRawUnsafe<BatchRow[]>(
-    `SELECT
+      `SELECT
         b.id,
         b."organizationId",
         b.engine,
         b.type,
+        COALESCE(b.source, CASE WHEN sr.id IS NULL THEN 'manual' ELSE 'scheduled' END) as source,
         b.status,
         b."configSnapshot",
         b."totalAssets",
@@ -378,6 +433,7 @@ export async function getActiveScanLock(orgId: string) {
         u.email as "initiatedByEmail"
       FROM "asset_scan_batch" b
       INNER JOIN "user" u ON u.id = b."initiatedByUserId"
+      LEFT JOIN "org_scan_schedule_run" sr ON sr."queuedBatchId" = b.id
       WHERE b."organizationId" = $1
         AND b.status IN ('queued', 'running')
       ORDER BY b."createdAt" DESC
@@ -647,13 +703,16 @@ export async function cancelScanBatch(orgId: string, batchId: string) {
 }
 
 export async function getOrgScanActivity(orgId: string, canScan: boolean): Promise<OrgScanActivityPayload> {
+  await ensureScanSchedulingTables();
+
   const batchRows = await prisma.$queryRawUnsafe<BatchRow[]>(
     `SELECT
-        b.id,
-        b."organizationId",
-        b.engine,
-        b.type,
-        b.status,
+          b.id,
+          b."organizationId",
+          b.engine,
+          b.type,
+          COALESCE(b.source, CASE WHEN sr.id IS NULL THEN 'manual' ELSE 'scheduled' END) as source,
+          b.status,
         b."configSnapshot",
         b."totalAssets",
         b."completedAssets",
@@ -666,6 +725,7 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
         u.email as "initiatedByEmail"
       FROM "asset_scan_batch" b
       INNER JOIN "user" u ON u.id = b."initiatedByUserId"
+      LEFT JOIN "org_scan_schedule_run" sr ON sr."queuedBatchId" = b.id
       WHERE b."organizationId" = $1
       ORDER BY
         CASE
@@ -674,6 +734,31 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
         END,
         b."createdAt" DESC
       LIMIT 8`,
+    orgId
+  );
+
+  const upcomingQueueRows = await prisma.$queryRawUnsafe<UpcomingQueueRow[]>(
+    `SELECT
+        r.id,
+        r."scheduleId" as "scheduleId",
+        r."organizationId" as "organizationId",
+        s.engine,
+        s.type,
+        r.status,
+        r."dueAt" as "dueAt",
+        r."createdAt" as "createdAt",
+        r."queuedBatchId" as "queuedBatchId",
+        r.error,
+        u.id as "initiatedById",
+        u.name as "initiatedByName",
+        u.email as "initiatedByEmail"
+      FROM "org_scan_schedule_run" r
+      INNER JOIN "org_scan_schedule" s ON s.id = r."scheduleId"
+      INNER JOIN "user" u ON u.id = s."createdByUserId"
+      WHERE r."organizationId" = $1
+        AND r.status = 'pending'
+      ORDER BY r."dueAt" ASC, r."createdAt" ASC
+      LIMIT 12`,
     orgId
   );
 
@@ -710,7 +795,6 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
   }
 
   const hydratedBatches = batchRows.map((batch) => toBatch(batch, scansByBatch.get(batch.id) || []));
-  const batchesById = new Map(hydratedBatches.map((batch) => [batch.id, batch]));
   const activeBatches = hydratedBatches.filter((batch) => batch.status === "queued" || batch.status === "running");
   const recentHistoryBatches = hydratedBatches
     .filter((batch) => batch.status === "completed" || batch.status === "failed" || batch.status === "cancelled")
@@ -726,9 +810,11 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
       batchId: entry.batchId,
       engine: entry.engine,
       batchType: entry.type,
+      batchSource: entry.source,
       batchStatus: entry.status,
     }))
   );
+  const upcomingQueue = upcomingQueueRows.map(toUpcomingQueueEntry);
   const lockBatch = hydratedBatches.find(
     (batch) => batch.status === "queued" || batch.status === "running"
   ) || null;
@@ -737,6 +823,7 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
     orgId,
     canScan,
     activeBatches,
+    upcomingQueue,
     latestCompletedBatch,
     latestBatch,
     recentHistoryBatches,
@@ -748,17 +835,26 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
           batchId: lockBatch.id,
           engine: lockBatch.engine,
           type: lockBatch.type,
+          source: lockBatch.source,
           status: lockBatch.status,
           message:
-            lockBatch.engine === "portDiscovery"
-              ? lockBatch.type === "single"
-                ? "A port discovery scan is running for this organization."
-                : "A port discovery batch is running for this organization."
-              : lockBatch.type === "group"
-                ? "An OpenSSL group scan is running for this organization."
-                : lockBatch.type === "single"
-                  ? "An OpenSSL scan is running for this organization."
-                  : "An OpenSSL full scan is running for this organization.",
+            lockBatch.source === "scheduled"
+              ? lockBatch.engine === "portDiscovery"
+                ? "A scheduled port discovery scan is queued or running for this organization."
+                : "A scheduled OpenSSL scan is queued or running for this organization."
+              : lockBatch.source === "automated"
+                ? lockBatch.engine === "portDiscovery"
+                  ? "An automated port discovery scan is running for this organization."
+                  : "An automated OpenSSL scan is running for this organization."
+                : lockBatch.engine === "portDiscovery"
+                  ? lockBatch.type === "single"
+                    ? "A port discovery scan is running for this organization."
+                    : "A port discovery batch is running for this organization."
+                  : lockBatch.type === "group"
+                    ? "An OpenSSL group scan is running for this organization."
+                    : lockBatch.type === "single"
+                      ? "An OpenSSL scan is running for this organization."
+                      : "An OpenSSL full scan is running for this organization.",
           initiatedAt: lockBatch.createdAt,
           initiatedBy: lockBatch.initiatedBy,
           percentComplete: lockBatch.percentComplete,
@@ -768,6 +864,7 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
           batchId: null,
           engine: null,
           type: null,
+          source: null,
           status: null,
           message: null,
           initiatedAt: null,

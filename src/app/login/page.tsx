@@ -11,17 +11,20 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/app";
+  const prefilledEmail = searchParams.get("email") || "";
   const { data: sessionData, isPending: sessionLoading } = useSession();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(prefilledEmail);
   const [emailTouched, setEmailTouched] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
   const [loadingMagic, setLoadingMagic] = useState(false);
   const [otpScreen, setOtpScreen] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const isValidEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
   const emailError = emailTouched && email.length > 0 && !isValidEmail(email);
 
   const handleGoogleSignIn = async () => {
+    setSubmitError("");
     setLoadingGoogle(true);
     try {
       await signIn.social({ provider: "google", callbackURL: callbackUrl });
@@ -33,21 +36,55 @@ function LoginForm() {
 
   const handleSendCode = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!isValidEmail(email)) return;
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!isValidEmail(normalizedEmail)) return;
+
+    setSubmitError("");
+    setEmail(normalizedEmail);
     setLoadingMagic(true);
+
     try {
-      // This triggers the magicLink flow which now also generates an OTP
-      await signIn.magicLink({ email, callbackURL: callbackUrl });
+      const res = await fetch("/api/auth/request-login-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          callbackURL: callbackUrl,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSubmitError(data.error || "Unable to send a verification code.");
+        return;
+      }
+
       setOtpScreen(true);
     } catch (error) {
       console.error(error);
+      setSubmitError("Something went wrong. Please try again.");
     } finally {
       setLoadingMagic(false);
     }
   };
 
   const handleResend = async () => {
-    await signIn.magicLink({ email, callbackURL: callbackUrl });
+    const res = await fetch("/api/auth/request-login-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        callbackURL: callbackUrl,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Unable to resend the verification code.");
+    }
   };
 
   const handleOtpVerified = (verifyUrl: string) => {
@@ -93,7 +130,7 @@ function LoginForm() {
             <span className="text-white text-xs font-bold uppercase tracking-wider">Enterprise Edition</span>
           </div>
           <h2 className="text-5xl lg:text-6xl font-black text-white mb-6 leading-[1.1] tracking-tight">
-            Securing the Future of Banking.
+            Secure the Future of Internet.
           </h2>
           <p className="text-white/80 text-lg leading-relaxed font-medium">
             Proactively identify deprecated cryptography algorithms, measure transition readiness, and intuitively manage CertIn-compliant CBOMs.
@@ -195,7 +232,11 @@ function LoginForm() {
                       type="email" 
                       required
                       value={email}
-                      onChange={e => { setEmail(e.target.value); if (!emailTouched) setEmailTouched(true); }}
+                      onChange={e => {
+                        setEmail(e.target.value);
+                        setSubmitError("");
+                        if (!emailTouched) setEmailTouched(true);
+                      }}
                       onBlur={() => setEmailTouched(true)}
                       placeholder="you@example.com" 
                       className={`w-full bg-white border rounded-xl px-4 py-3.5 text-[#3d200a] placeholder:text-[#8a5d33]/50 focus:outline-none focus:ring-2 focus:border-transparent transition-all shadow-sm ${
@@ -204,6 +245,9 @@ function LoginForm() {
                     />
                     {emailError && (
                       <p className="text-xs text-red-600 font-medium px-1 mt-1">Please enter a valid email address.</p>
+                    )}
+                    {!emailError && submitError && (
+                      <p className="text-xs text-red-600 font-medium px-1 mt-1">{submitError}</p>
                     )}
                   </div>
                   
@@ -218,7 +262,7 @@ function LoginForm() {
               </div>
 
               <p className="mt-8 text-sm text-[#8a5d33] text-center w-full">
-                Don&apos;t have an enterprise account?{' '}
+                Don&apos;t have an account?{' '}
                 <Link href="/signup" className="font-bold text-[#8B0000] hover:underline">
                   Register here
                 </Link>

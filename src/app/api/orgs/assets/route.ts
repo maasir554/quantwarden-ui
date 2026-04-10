@@ -4,6 +4,7 @@ import { getOrgMemberAccess } from "@/lib/org-scan-permissions";
 import { normalizeAssetOpenPorts } from "@/lib/port-discovery";
 import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
+import { enqueueAssetAddedWorkflow } from "@/lib/scan-workflow";
 
 export async function GET(req: NextRequest) {
   try {
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { orgId, value, type, isRoot, parentId, openPorts } = await req.json();
+    const { orgId, value, type, isRoot, parentId, openPorts, isOnboarding } = await req.json();
 
     if (!orgId || !value) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -100,6 +101,17 @@ export async function POST(req: NextRequest) {
       } else if (dbError.code !== 'P2002' && !dbError.message?.includes('unique constraint')) {
         throw dbError;
       }
+    }
+
+    // Trigger automated scan workflow (port_discovery → openssl) for new assets.
+    // Skipped during onboarding — onboarding uses its own full workflow chain.
+    // Only trigger for domain/ip assets (scannable types). Fire-and-forget.
+    const assetTypeNorm = (type || "unknown").toLowerCase();
+    const isScannable = assetTypeNorm === "domain" || assetTypeNorm === "ip";
+    if (!isOnboarding && isScannable) {
+      void enqueueAssetAddedWorkflow(orgId, assetId, session.user.id).catch((err) =>
+        console.warn("[workflow] Failed to enqueue asset_added workflow:", err?.message)
+      );
     }
 
     return NextResponse.json({ success: true, asset: { id: assetId } });

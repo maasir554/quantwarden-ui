@@ -3,6 +3,8 @@ export type ScanBatchStatus = "queued" | "running" | "completed" | "failed" | "c
 export type ScanItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type ScanHistoryCategory = "passed" | "timeout" | "dnsExpired" | "failed";
 export type ScanEngine = "openssl" | "portDiscovery";
+export type ScanBatchSource = "manual" | "scheduled" | "automated";
+export type ScanUpcomingStatus = "pending" | "queued";
 
 export interface ScanInitiator {
   id: string;
@@ -27,6 +29,7 @@ export interface ScanActivityBatch {
   organizationId: string;
   engine: ScanEngine;
   type: ScanBatchType;
+  source: ScanBatchSource;
   status: ScanBatchStatus;
   totalAssets: number;
   completedAssets: number;
@@ -46,6 +49,7 @@ export interface ScanLockState {
   batchId: string | null;
   engine: ScanEngine | null;
   type: ScanBatchType | null;
+  source: ScanBatchSource | null;
   status: ScanBatchStatus | null;
   message: string | null;
   initiatedAt: string | null;
@@ -57,6 +61,7 @@ export interface ScanHistoryEntry {
   batchId: string;
   engine: ScanEngine;
   type: ScanBatchType;
+  source: ScanBatchSource;
   status: ScanBatchStatus;
   createdAt: string;
   startedAt: string | null;
@@ -95,6 +100,7 @@ export interface ScanFailureEntry {
   batchId: string;
   engine: ScanEngine;
   batchType: ScanBatchType;
+  batchSource: ScanBatchSource;
   batchStatus: ScanBatchStatus;
   assetId: string;
   assetValue: string;
@@ -109,10 +115,26 @@ export interface OrgScanActivityPayload {
   orgId: string;
   canScan: boolean;
   activeBatches: ScanActivityBatch[];
+  upcomingQueue: ScanUpcomingEntry[];
   latestCompletedBatch: ScanActivityBatch | null;
   latestBatch: ScanActivityBatch | null;
   recentHistoryBatches: ScanActivityBatch[];
   recentHistory: ScanHistoryEntry[];
   allFailures: ScanFailureEntry[];
   lock: ScanLockState;
+}
+
+export interface ScanUpcomingEntry {
+  id: string;
+  scheduleId: string;
+  organizationId: string;
+  engine: ScanEngine;
+  type: ScanBatchType;
+  source: "scheduled";
+  status: ScanUpcomingStatus;
+  dueAt: string;
+  createdAt: string;
+  queuedBatchId: string | null;
+  error: string | null;
+  initiatedBy: ScanInitiator | null;
 }

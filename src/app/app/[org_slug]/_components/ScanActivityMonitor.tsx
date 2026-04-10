@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 import {
   Activity,
   AlertTriangle,
@@ -19,7 +20,15 @@ import {
   X,
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
-import type { ScanActivityBatch, ScanActivityItem, ScanEngine, ScanHistoryCategory, ScanHistoryEntry } from "@/lib/scan-activity-types";
+import type {
+  ScanActivityBatch,
+  ScanActivityItem,
+  ScanBatchSource,
+  ScanEngine,
+  ScanHistoryCategory,
+  ScanHistoryEntry,
+  ScanUpcomingEntry,
+} from "@/lib/scan-activity-types";
 
 function batchLabel(type: ScanActivityBatch["type"], engine: ScanEngine) {
   if (engine === "portDiscovery") {
@@ -35,6 +44,27 @@ function batchLabel(type: ScanActivityBatch["type"], engine: ScanEngine) {
 
 function engineServiceLabel(engine: ScanEngine | null | undefined) {
   return engine === "portDiscovery" ? "Nmap API" : "OpenSSL scanning endpoint";
+}
+
+function sourceBadgeMeta(source: ScanBatchSource) {
+  if (source === "scheduled") {
+    return {
+      label: "Scheduled",
+      tone: "border-blue-200 bg-blue-50 text-blue-700",
+    };
+  }
+
+  if (source === "automated") {
+    return {
+      label: "Automated",
+      tone: "border-violet-200 bg-violet-50 text-violet-700",
+    };
+  }
+
+  return {
+    label: "Manual",
+    tone: "border-amber-200 bg-amber-50 text-amber-800",
+  };
 }
 
 function formatWhen(value: string | null) {
@@ -194,6 +224,7 @@ type LiveBatchCardItem = ScanActivityItem & {
 };
 
 function BatchSection({ batch }: { batch: ScanActivityBatch }) {
+  const sourceMeta = sourceBadgeMeta(batch.source);
   const [activeTab, setActiveTab] = useState<"running" | "queued" | "completed">(
     batch.items.some((item) => item.status === "running")
       ? "running"
@@ -362,7 +393,12 @@ function BatchSection({ batch }: { batch: ScanActivityBatch }) {
           <p className="text-xs font-semibold text-[#8a5d33]/60">
             {batch.status === "running" || batch.status === "queued" ? "Current Batch" : "Latest Batch"}
           </p>
-          <h3 className="mt-2 text-2xl font-black tracking-tight text-[#3d200a]">{batchLabel(batch.type, batch.engine)}</h3>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h3 className="text-2xl font-black tracking-tight text-[#3d200a]">{batchLabel(batch.type, batch.engine)}</h3>
+            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceMeta.tone}`}>
+              {sourceMeta.label}
+            </span>
+          </div>
           <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-[#8a5d33]/70">
             <span>Initiated by {batch.initiatedBy?.name || batch.initiatedBy?.email || "Unknown"}</span>
             <span className="text-[#8a5d33]/35">•</span>
@@ -532,6 +568,7 @@ function BatchSection({ batch }: { batch: ScanActivityBatch }) {
 }
 
 function HistoryBatchSection({ entry }: { entry: ScanHistoryEntry }) {
+  const sourceMeta = sourceBadgeMeta(entry.source);
   const [activeFilter, setActiveFilter] = useState<ScanHistoryCategory>(() => {
     if (entry.passedAssets > 0) return "passed";
     if (entry.timeoutAssets > 0) return "timeout";
@@ -570,6 +607,14 @@ function HistoryBatchSection({ entry }: { entry: ScanHistoryEntry }) {
 
   return (
     <section className="rounded-[1.35rem] border border-slate-200/70 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-black text-[#3d200a]">Result breakdown</p>
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceMeta.tone}`}>
+            {sourceMeta.label}
+          </span>
+        </div>
+      </div>
       <div className="mt-4 flex flex-wrap gap-2">
         {filters.map((filter) => {
           const meta = historyCategoryMeta(filter);
@@ -649,6 +694,80 @@ function HistoryBatchSection({ entry }: { entry: ScanHistoryEntry }) {
   );
 }
 
+function UpcomingQueueSection({
+  entries,
+  canScan,
+  cancellingRunId,
+  onCancel,
+}: {
+  entries: ScanUpcomingEntry[];
+  canScan: boolean;
+  cancellingRunId: string | null;
+  onCancel: (runId: string) => Promise<void>;
+}) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[1.75rem] border border-slate-200/80 bg-white/75 p-5 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold text-[#8a5d33]/60">Upcoming Queue</p>
+          <h3 className="mt-1 text-xl font-black tracking-tight text-[#3d200a]">
+            {entries.length} scheduled {entries.length === 1 ? "scan" : "scans"} waiting
+          </h3>
+          <p className="mt-1 text-sm font-semibold text-[#8a5d33]/75">
+            Scheduled work stays here until the organization lock clears and the worker materializes the next batch.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-3">
+        {entries.map((entry) => {
+          const sourceMeta = sourceBadgeMeta(entry.source);
+          return (
+            <div
+              key={entry.id}
+              className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-[#fffdf9] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-black text-[#3d200a]">{batchLabel(entry.type, entry.engine)}</p>
+                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceMeta.tone}`}>
+                    {sourceMeta.label}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-[#8a5d33]/80">
+                  Due {formatWhen(entry.dueAt)}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-[#8a5d33]/70">
+                  Scheduled by {entry.initiatedBy?.name || entry.initiatedBy?.email || "Unknown"}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                  Waiting
+                </span>
+                {canScan && (
+                  <button
+                    type="button"
+                    onClick={() => void onCancel(entry.id)}
+                    disabled={cancellingRunId === entry.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-red-200/80 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancellingRunId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function ScanActivityMonitor({
   orgId,
   orgSlug,
@@ -667,6 +786,7 @@ export default function ScanActivityMonitor({
   const [showHistoryInfoTooltip, setShowHistoryInfoTooltip] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [openHistoryBatchId, setOpenHistoryBatchId] = useState<string | null>(null);
+  const [cancellingQueueRunId, setCancellingQueueRunId] = useState<string | null>(null);
   const [isHeaderCompact, setIsHeaderCompact] = useState(false);
   const [hideHeaderActions, setHideHeaderActions] = useState(false);
   const [isServiceWarningSticky, setIsServiceWarningSticky] = useState(false);
@@ -686,11 +806,13 @@ export default function ScanActivityMonitor({
     startActivityMonitor,
     refreshActivity,
     cancelBatch,
+    cancelQueuedRun,
   } = useScanActivity(orgId, {
     orgSlug,
   });
 
   const latestBatch = activity?.latestBatch || null;
+  const upcomingQueue = activity?.upcomingQueue || [];
   const activeSingles = (activity?.activeBatches || []).filter((batch) => batch.type === "single").slice(0, 3);
   const activeBatch = activity?.activeBatches[0] || null;
   const featuredBatch = activeBatch;
@@ -932,6 +1054,21 @@ export default function ScanActivityMonitor({
     }
   };
 
+  const handleCancelQueuedRun = async (runId: string) => {
+    if (!canScan || cancellingQueueRunId) return;
+    setCancellingQueueRunId(runId);
+    try {
+      const result = await cancelQueuedRun(runId);
+      if (!result.ok) {
+        toast.error(result.error || "Failed to cancel queued scheduled scan.");
+      } else {
+        toast.success("Queued scheduled scan cancelled.");
+      }
+    } finally {
+      setCancellingQueueRunId(null);
+    }
+  };
+
   return (
     <>
       <div
@@ -964,6 +1101,11 @@ export default function ScanActivityMonitor({
               <p className="mt-1 truncate text-xs font-semibold text-red-100/80">
                 {featuredBatch ? batchLabel(featuredBatch.type, featuredBatch.engine) : "No active shared scans"}
               </p>
+              {upcomingQueue.length > 0 && (
+                <p className="mt-1 truncate text-[11px] font-semibold text-red-100/75">
+                  {upcomingQueue.length} upcoming scheduled {upcomingQueue.length === 1 ? "scan" : "scans"} in queue
+                </p>
+              )}
             </div>
           </div>
           {showMiniProgress && (
@@ -1291,7 +1433,14 @@ export default function ScanActivityMonitor({
                       <div className="flex items-start gap-3">
                         <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
                         <div>
-                          <p className="text-xs font-semibold text-amber-800/75">Org scan lock</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-xs font-semibold text-amber-800/75">Org scan lock</p>
+                            {activity.lock.source && (
+                              <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceBadgeMeta(activity.lock.source).tone}`}>
+                                {sourceBadgeMeta(activity.lock.source).label}
+                              </span>
+                            )}
+                          </div>
                           <p className="mt-2 text-sm font-bold text-amber-900">
                             {activity.lock.message}
                           </p>
@@ -1302,6 +1451,13 @@ export default function ScanActivityMonitor({
                       </div>
                     </div>
                   )}
+
+                  <UpcomingQueueSection
+                    entries={upcomingQueue}
+                    canScan={canScan}
+                    cancellingRunId={cancellingQueueRunId}
+                    onCancel={handleCancelQueuedRun}
+                  />
 
                   {shouldShowLiveScanPanel && liveScanBatch && (
                     <BatchSection batch={liveScanBatch} />
@@ -1328,7 +1484,12 @@ export default function ScanActivityMonitor({
                           <div key={batch.id} className="rounded-2xl border border-amber-500/10 bg-[#fffdf9] p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="text-sm font-black text-[#3d200a]">{batchLabel(batch.type, batch.engine)}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-black text-[#3d200a]">{batchLabel(batch.type, batch.engine)}</p>
+                                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceBadgeMeta(batch.source).tone}`}>
+                                    {sourceBadgeMeta(batch.source).label}
+                                  </span>
+                                </div>
                                 <p className="mt-1 text-xs font-semibold text-[#8a5d33]/65">
                                   {batch.initiatedBy?.name || batch.initiatedBy?.email || "Unknown"} • {formatWhen(batch.createdAt)}
                                 </p>
@@ -1390,7 +1551,12 @@ export default function ScanActivityMonitor({
                               aria-expanded={isOpen}
                             >
                               <div>
-                                <p className="scan-history-title text-sm font-black text-[#3d200a]">{batchLabel(entry.type, entry.engine)}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="scan-history-title text-sm font-black text-[#3d200a]">{batchLabel(entry.type, entry.engine)}</p>
+                                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceBadgeMeta(entry.source).tone}`}>
+                                    {sourceBadgeMeta(entry.source).label}
+                                  </span>
+                                </div>
                                 <p className="scan-history-meta mt-1 text-xs font-semibold text-[#8a5d33]/70">
                                   {formatWhen(entry.completedAt || entry.createdAt)}
                                 </p>

@@ -35,16 +35,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return match?.[1] ?? null;
   }, [pathname]);
 
-  // Redirect to login if not authenticated
-  if (!isPending && !sessionData?.session) {
-    if (pathname && pathname.includes("/app/invites/")) {
-      router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`);
-    } else {
-      router.replace("/login");
-    }
-    return null;
-  }
-
   const user = sessionData?.user;
   const initials = user?.name
     ? user.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
@@ -59,6 +49,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       }
     });
   };
+
+  useEffect(() => {
+    if (isPending || sessionData?.session) {
+      return;
+    }
+
+    if (pathname && pathname.includes("/app/invites/")) {
+      router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`);
+      return;
+    }
+
+    router.replace("/login");
+  }, [isPending, pathname, router, sessionData?.session]);
 
   useEffect(() => {
     if (!workspaceOrgSlug || !sessionData?.session) {
@@ -93,6 +96,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [workspaceOrgSlug, sessionData?.session]);
+
+  if (isPending || !sessionData?.session) {
+    return (
+      <ScanActivityProvider>
+        <div className="min-h-screen flex items-center justify-center bg-[#fffcf5] text-slate-900">
+          <Loader2 className="w-10 h-10 animate-spin text-[#8B0000]" />
+        </div>
+      </ScanActivityProvider>
+    );
+  }
 
   return (
     <ScanActivityProvider>

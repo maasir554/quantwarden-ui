@@ -4,6 +4,8 @@ import { claimNextPendingScan, listOrganizationsWithActiveScanWork } from "@/lib
 import { runOpenSSLScanItem } from "@/lib/openssl-scan-runner";
 import { runPortDiscoveryItem } from "@/lib/port-discovery-runner";
 import { ensureScanSchedulingTables, runSchedulerMaintenanceCycle } from "@/lib/scan-schedule-server";
+import { advanceOrgWorkflows, listOrgsWithPendingWorkflows } from "@/lib/scan-workflow";
+import { ensureWorkflowTable } from "@/lib/scan-workflow-schema";
 import type { ClaimedScanItem } from "@/lib/scan-batch-server";
 import { loadWorkerConfig } from "./config";
 import { logger } from "./logger";
@@ -25,17 +27,21 @@ let schedulerTickPromise: Promise<void> | null = null;
 let controlServer: http.Server | null = null;
 let healthServer: http.Server | null = null;
 
-function markWorkerActive(reason: string, orgId?: string) {
-  const wasActive = isWorkerActive();
+function refreshActiveWindow(orgId?: string) {
   activeUntilMs = Math.max(activeUntilMs, Date.now() + config.activeGraceMs);
   if (orgId) {
     prioritizedOrgIds.add(orgId);
   }
+  notifyLoop("executor");
+  notifyLoop("scheduler");
+}
+
+function markWorkerActive(reason: string, orgId?: string) {
+  const wasActive = isWorkerActive();
+  refreshActiveWindow(orgId);
   if (!wasActive || orgId) {
     logger.info("Worker switched to active mode.", { reason, orgId: orgId || null });
   }
-  notifyLoop("executor");
-  notifyLoop("scheduler");
 }
 
 function isWorkerActive() {
@@ -255,6 +261,19 @@ async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
       });
     } finally {
       runningJobs.delete(claimed.scanId);
+      refreshActiveWindow(orgId);
+
+      // Advance any automated scan workflows for this org now that a batch step finished
+      void advanceOrgWorkflows(orgId).catch((err: any) => {
+        logger.warn("Workflow advancement failed after scan job.", {
+          orgId,
+          scanId: claimed.scanId,
+          message: err?.message || String(err),
+        });
+      });
+
+      void runSchedulerTickSafe();
+      void runExecutorTickSafe();
       if (runningJobs.size > 0) {
         markWorkerActive("scan_job_still_running");
       }
@@ -303,6 +322,22 @@ async function runExecutorTick() {
 
       await launchScanJob(orgId, claimed);
     }
+  }
+
+  // Also advance any pending automated workflows (picks up orgs not in active batches yet)
+  const workflowOrgIds = await listOrgsWithPendingWorkflows(config.activeOrgQueryLimit);
+  for (const orgId of workflowOrgIds) {
+    if (shuttingDown) break;
+    await advanceOrgWorkflows(orgId).catch((err: any) => {
+      logger.warn("Workflow tick advancement failed.", {
+        orgId,
+        message: err?.message || String(err),
+      });
+    });
+  }
+
+  if (workflowOrgIds.length > 0) {
+    markWorkerActive("active_workflow_detected");
   }
 }
 
@@ -396,6 +431,7 @@ async function shutdown(signal: string) {
 
 async function main() {
   await ensureScanSchedulingTables();
+  await ensureWorkflowTable();
   await startControlServer();
   await startHealthServer();
 

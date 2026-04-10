@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
           targetUrl = `${baseUrl}/app/invites/${inviteId}`;
           ctaLabel = "View on QuantWarden";
         } else {
-          targetUrl = `${baseUrl}/signup?callbackUrl=${encodeURIComponent(`/app/invites/${inviteId}`)}`;
+          targetUrl = `${baseUrl}/signup?inviteId=${encodeURIComponent(inviteId)}&callbackUrl=${encodeURIComponent(`/app/invites/${inviteId}`)}`;
           ctaLabel = "Sign up on QuantWarden";
         }
 

@@ -16,6 +16,7 @@ export interface CreateScanBatchInput {
   engine?: ScanEngine;
   assetIds: string[];
   configSnapshot?: unknown;
+  source?: "manual" | "automated";
 }
 
 export interface CreateScanBatchSuccess {
@@ -206,13 +207,14 @@ export async function createScanBatch(input: CreateScanBatchInput): Promise<Crea
 
     await tx.$executeRawUnsafe(
       `INSERT INTO "asset_scan_batch"
-        (id, "organizationId", "initiatedByUserId", engine, type, status, "configSnapshot", "totalAssets", "completedAssets", "failedAssets", "createdAt")
-       VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, 0, 0, $8)`,
+        (id, "organizationId", "initiatedByUserId", engine, type, source, status, "configSnapshot", "totalAssets", "completedAssets", "failedAssets", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, 0, 0, $9)`,
       batchId,
       orgId,
       initiatedByUserId,
       engine,
       type,
+      input.source || "manual",
       normalizedConfigSnapshot ? JSON.stringify(normalizedConfigSnapshot) : null,
       scanTargets.length,
       now

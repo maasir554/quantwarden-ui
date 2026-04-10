@@ -34,6 +34,11 @@ interface CancelBatchInput {
   batchId: string;
 }
 
+interface CancelQueuedRunInput {
+  orgId: string;
+  runId: string;
+}
+
 interface RegisteredOrgOptions {
   orgId: string;
   orgSlug?: string;
@@ -81,6 +86,7 @@ interface ScanActivityContextValue {
   startActivityMonitor: (orgId: string) => Promise<void>;
   createBatch: (input: CreateBatchInput) => Promise<{ ok: boolean; error?: string }>;
   cancelBatch: (input: CancelBatchInput) => Promise<{ ok: boolean; error?: string }>;
+  cancelQueuedRun: (input: CancelQueuedRunInput) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const ScanActivityContext = createContext<ScanActivityContextValue | null>(null);
@@ -146,6 +152,8 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
   const streamConnectionsRef = useRef<Map<string, StreamConnectionState>>(new Map());
   const createBatchPromisesRef = useRef<Map<string, Promise<{ ok: boolean; error?: string }>>>(new Map());
   const noActiveGraceChecksRef = useRef<Map<string, number>>(new Map());
+  // Stable ref to ensureOrgStream to avoid circular dependency with applyActivityState
+  const ensureOrgStreamRef = useRef<((orgId: string, intent: StreamIntent, activity?: OrgScanActivityPayload | null) => Promise<void>) | null>(null);
 
   const setOrgState = useCallback((orgId: string, nextState: OrgActivityState) => {
     setOrgStates((previous) => {
@@ -173,6 +181,34 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
 
     if (hadActiveBatches && !hasActiveBatches && previous.streamIntent !== "off") {
       toast.success("Scan completed. Live monitor is now idle.");
+    }
+
+    // Detect newly appeared automated batches and notify the user
+    if (hasActiveBatches) {
+      const previousBatchIds = new Set(
+        (previous.data?.activeBatches || []).map((b) => b.id)
+      );
+      for (const batch of activity.activeBatches) {
+        if (!previousBatchIds.has(batch.id) && batch.source === "automated") {
+          const engineLabel = batch.engine === "portDiscovery" ? "port discovery" : "SSL scan";
+          const typeLabel = batch.type === "full" ? "Full" : batch.type === "group" ? "Group" : "Single";
+          toast.info(`${typeLabel} ${engineLabel} started automatically.`, {
+            id: `auto-batch-${batch.id}`,
+            duration: 8000,
+            position: "bottom-right",
+            action: {
+              label: "View",
+              onClick: () => setMonitorOrgId(orgId),
+            },
+          });
+
+          // Start SSE stream so progress is tracked live
+          const latestState = orgStatesRef.current[orgId] || defaultOrgState;
+          if (latestState.streamIntent === "off" && ensureOrgStreamRef.current) {
+            void ensureOrgStreamRef.current(orgId, "batch-driven", activity);
+          }
+        }
+      }
     }
 
     setOrgState(orgId, {
@@ -224,25 +260,17 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
           throw new Error(data?.error || "Failed to fetch scan activity.");
         }
 
-        const syncedAt = new Date().toISOString();
-        writeStoredLastSync(orgId, syncedAt);
-
+        // Route through applyActivityState so automated-batch detection runs on every poll
         const subscription = subscriptionsRef.current.get(orgId);
-        setOrgState(orgId, {
-          data,
-          loading: false,
+        const latestPrev = orgStatesRef.current[orgId] || defaultOrgState;
+        if (subscription?.orgSlug && !latestPrev.orgSlug) {
+          setOrgState(orgId, { ...latestPrev, orgSlug: subscription.orgSlug });
+        }
+        applyActivityState(orgId, data, {
+          connected: (orgStatesRef.current[orgId] || defaultOrgState).connected,
           error: null,
-          serviceUnavailableRemainingSeconds: previous.serviceUnavailableRemainingSeconds,
-          checkingConnection: previous.checkingConnection,
-          orgSlug: subscription?.orgSlug || previous.orgSlug,
-          lastSyncAt: syncedAt,
-          connected: previous.connected,
-          streamIntent: previous.streamIntent,
-          streamStatus: previous.streamStatus,
-          pendingBatchType: previous.pendingBatchType,
-          pendingBatchEngine: previous.pendingBatchEngine,
-          cancellingBatchId: previous.cancellingBatchId,
         });
+
         return data;
       } catch (error: any) {
         setOrgState(orgId, {
@@ -258,7 +286,7 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
 
     refreshPromisesRef.current.set(orgId, refreshPromise);
     return refreshPromise;
-  }, [setOrgState]);
+  }, [setOrgState, applyActivityState]);
 
   const setStreamState = useCallback((
     orgId: string,
@@ -656,6 +684,9 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
     openOrgStream(orgId, intent);
   }, [openOrgStream, refreshOrgActivity, setOrgState, setStreamState, stopOrgStreaming]);
 
+  // Keep ref current so applyActivityState can call ensureOrgStream without circular dep
+  ensureOrgStreamRef.current = ensureOrgStream;
+
   const checkForActiveScans = useCallback(async (
     orgId: string,
     options?: { showIdleToast?: boolean; startStreamOnActive?: boolean }
@@ -927,6 +958,34 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
     }
   }, [applyActivityState, refreshOrgActivity, setOrgState, stopOrgStreaming]);
 
+  const cancelQueuedRun = useCallback(async (input: CancelQueuedRunInput) => {
+    try {
+      const response = await fetch(`/api/orgs/scans/schedule-runs/${encodeURIComponent(input.runId)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgId: input.orgId }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        return { ok: false, error: data?.error || "Failed to cancel queued scheduled scan." };
+      }
+
+      if (data?.activity) {
+        applyActivityState(input.orgId, data.activity, {
+          connected: false,
+          error: null,
+        });
+      } else {
+        await refreshOrgActivity(input.orgId);
+      }
+
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: error?.message || "Failed to cancel queued scheduled scan." };
+    }
+  }, [applyActivityState, refreshOrgActivity]);
+
   const openMonitor = useCallback((orgId: string) => {
     setMonitorOrgId(orgId);
   }, []);
@@ -950,8 +1009,10 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
     startActivityMonitor,
     createBatch,
     cancelBatch,
+    cancelQueuedRun,
   }), [
     cancelBatch,
+    cancelQueuedRun,
     checkForActiveScans,
     closeMonitor,
     createBatch,
@@ -987,6 +1048,7 @@ export function useScanActivity(
     getOrgState,
     createBatch,
     cancelBatch,
+    cancelQueuedRun,
     refreshOrgActivity,
     checkForActiveScans,
     startActivityMonitor,
@@ -1022,6 +1084,7 @@ export function useScanActivity(
     startActivityMonitor: () => startActivityMonitor(orgId),
     createBatch: (input: Omit<CreateBatchInput, "orgId">) => createBatch({ ...input, orgId }),
     cancelBatch: (batchId: string) => cancelBatch({ orgId, batchId }),
+    cancelQueuedRun: (runId: string) => cancelQueuedRun({ orgId, runId }),
     activity: state.data,
     loading: state.loading,
     error: state.error,

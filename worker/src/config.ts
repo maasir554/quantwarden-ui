@@ -18,6 +18,7 @@ export interface WorkerConfig {
   controlPort: number;
   healthPort: number;
   wakeSecret: string;
+  subfinderUrl: string;
 }
 
 export function loadWorkerConfig(): WorkerConfig {
@@ -31,5 +32,6 @@ export function loadWorkerConfig(): WorkerConfig {
     controlPort: parseIntEnv("SCAN_WORKER_PORT", 8088, { min: 1, max: 65535 }),
     healthPort: parseIntEnv("SCAN_WORKER_HEALTH_PORT", 8089, { min: 1, max: 65535 }),
     wakeSecret: process.env.SCAN_WORKER_WAKE_SECRET || "",
+    subfinderUrl: process.env.SUBFINDER_API_URL || "http://127.0.0.1:8085",
   };
 }

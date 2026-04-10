@@ -368,6 +368,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [portDiscoveryProbeBatchSize, setPortDiscoveryProbeBatchSize] = useState(String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE));
   const [portDiscoveryProbeTimeoutMs, setPortDiscoveryProbeTimeoutMs] = useState(String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS));
   const [isLoadingPortDiscoveryConfig, setIsLoadingPortDiscoveryConfig] = useState(false);
+  const [isSavingPortDiscoveryConfig, setIsSavingPortDiscoveryConfig] = useState(false);
   const [isStartingPortDiscovery, setIsStartingPortDiscovery] = useState(false);
 
   // === Discovery Queue ===
@@ -485,6 +486,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setPortDiscoveryProbeBatchSize(String(defaults.probeBatchSize));
     setPortDiscoveryProbeTimeoutMs(String(defaults.probeTimeoutMs));
     setIsLoadingPortDiscoveryConfig(false);
+    setIsSavingPortDiscoveryConfig(false);
     setIsStartingPortDiscovery(false);
   }, []);
 
@@ -667,6 +669,56 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
   const removePortDiscoveryEntry = (id: string) => {
     setPortDiscoveryEntries((current) => current.filter((entry) => entry.id !== id));
+  };
+
+  const savePortDiscoveryConfig = async () => {
+    if (isSavingPortDiscoveryConfig || isStartingPortDiscovery) return;
+
+    if (
+      portDiscoveryEntryIssues.hasDuplicatePorts ||
+      portDiscoveryEntryIssues.hasInvalidPorts ||
+      portDiscoveryEntryIssues.hasEmptyTitles ||
+      portDiscoveryEntryIssues.enabledCount === 0 ||
+      hasInvalidPortDiscoveryBatchSize ||
+      hasInvalidPortDiscoveryTimeout
+    ) {
+      toast.error("Fix the port discovery settings before saving.", { position: "bottom-right" });
+      return;
+    }
+
+    const config = normalizePortDiscoveryConfig({
+      entries: portDiscoveryEntries.map((entry) => ({
+        port: Number(entry.portDraft),
+        title: entry.title,
+        enabled: entry.enabled,
+      })),
+      probeBatchSize: Number(portDiscoveryProbeBatchSize),
+      probeTimeoutMs: Number(portDiscoveryProbeTimeoutMs),
+    });
+
+    setIsSavingPortDiscoveryConfig(true);
+    try {
+      const res = await fetch("/api/orgs/port-discovery/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orgId: org.id,
+          entries: config.entries,
+          probeBatchSize: config.probeBatchSize,
+          probeTimeoutMs: config.probeTimeoutMs,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "Failed to save port discovery settings.");
+      toast.success("Port discovery config saved.", { position: "bottom-right" });
+    } catch (error) {
+      toast.error("Could not save port discovery config.", {
+        description: error instanceof Error ? error.message : "Please try again.",
+        position: "bottom-right",
+      });
+    } finally {
+      setIsSavingPortDiscoveryConfig(false);
+    }
   };
 
   const startPortDiscovery = async () => {
@@ -1963,7 +2015,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   inputMode="numeric"
                                   value={entry.portDraft}
                                   onChange={(e) => {
-                                    if (/^\\d*$/.test(e.target.value)) {
+                                    if (/^\d*$/.test(e.target.value)) {
                                       updatePortDiscoveryEntry(entry.id, { portDraft: e.target.value });
                                     }
                                   }}
@@ -2026,7 +2078,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                         inputMode="numeric"
                         value={portDiscoveryProbeBatchSize}
                         onChange={(e) => {
-                          if (/^\\d*$/.test(e.target.value)) {
+                          if (/^\d*$/.test(e.target.value)) {
                             setPortDiscoveryProbeBatchSize(e.target.value);
                           }
                         }}
@@ -2048,7 +2100,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                         inputMode="numeric"
                         value={portDiscoveryProbeTimeoutMs}
                         onChange={(e) => {
-                          if (/^\\d*$/.test(e.target.value)) {
+                          if (/^\d*$/.test(e.target.value)) {
                             setPortDiscoveryProbeTimeoutMs(e.target.value);
                           }
                         }}
@@ -2129,31 +2181,60 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   </dl>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={startPortDiscovery}
-                  disabled={
-                    isStartingPortDiscovery ||
-                    isLoadingPortDiscoveryConfig ||
-                    portDiscoveryLocked ||
-                    portDiscoveryEntryIssues.hasDuplicatePorts ||
-                    portDiscoveryEntryIssues.hasInvalidPorts ||
-                    portDiscoveryEntryIssues.hasEmptyTitles ||
-                    portDiscoveryEntryIssues.enabledCount === 0 ||
-                    hasInvalidPortDiscoveryBatchSize ||
-                    hasInvalidPortDiscoveryTimeout
-                  }
-                  className="mt-auto inline-flex h-11 w-full items-center justify-center rounded-full bg-[#1e3a8a] text-sm font-bold text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {isStartingPortDiscovery ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Starting port discovery...
-                    </>
-                  ) : (
-                    "Start Port Discovery"
-                  )}
-                </button>
+                <div className="mt-auto flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={savePortDiscoveryConfig}
+                    disabled={
+                      isSavingPortDiscoveryConfig ||
+                      isStartingPortDiscovery ||
+                      isLoadingPortDiscoveryConfig ||
+                      portDiscoveryEntryIssues.hasDuplicatePorts ||
+                      portDiscoveryEntryIssues.hasInvalidPorts ||
+                      portDiscoveryEntryIssues.hasEmptyTitles ||
+                      portDiscoveryEntryIssues.enabledCount === 0 ||
+                      hasInvalidPortDiscoveryBatchSize ||
+                      hasInvalidPortDiscoveryTimeout
+                    }
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-slate-300 bg-white text-sm font-bold text-[#3d200a] transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {isSavingPortDiscoveryConfig ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save Config"
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={startPortDiscovery}
+                    disabled={
+                      isStartingPortDiscovery ||
+                      isSavingPortDiscoveryConfig ||
+                      isLoadingPortDiscoveryConfig ||
+                      portDiscoveryLocked ||
+                      portDiscoveryEntryIssues.hasDuplicatePorts ||
+                      portDiscoveryEntryIssues.hasInvalidPorts ||
+                      portDiscoveryEntryIssues.hasEmptyTitles ||
+                      portDiscoveryEntryIssues.enabledCount === 0 ||
+                      hasInvalidPortDiscoveryBatchSize ||
+                      hasInvalidPortDiscoveryTimeout
+                    }
+                    className="inline-flex h-11 w-full items-center justify-center rounded-full bg-[#1e3a8a] text-sm font-bold text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {isStartingPortDiscovery ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Starting port discovery...
+                      </>
+                    ) : (
+                      "Start Port Discovery"
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           )}
