@@ -137,8 +137,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <nav className="fixed top-0 left-0 right-0 z-50 w-full bg-white/80 backdrop-blur-lg border-b border-amber-500/15 shadow-sm">
           <div className="max-w-360 mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
             {/* Left: Logo */}
-            <Link href="/app" className="flex items-center gap-2.5 group">
-              {workspaceOrg ? (
+            <div className="flex items-center gap-2.5">
+              {workspaceOrg && (
                 <>
                   <Link
                     href={`/app/${workspaceOrg.slug}`}
@@ -155,14 +155,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   </Link>
                   <span className="hidden lg:inline text-lg font-black text-[#8B0000]/85">@</span>
                 </>
-              ) : null}
-              <div className="w-9 h-9 bg-[#8B0000] rounded-lg flex items-center justify-center shadow-md shadow-[#8B0000]/20 group-hover:shadow-lg group-hover:shadow-[#8B0000]/30 transition-all">
-                <Shield className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-lg font-extrabold text-[#3d200a] tracking-tight hidden sm:inline">
-                Quant<span className="text-[#8B0000]">Warden</span>
-              </span>
-            </Link>
+              )}
+              <Link href="/app" className="flex items-center gap-2.5 group">
+                <div className="w-9 h-9 bg-[#8B0000] rounded-lg flex items-center justify-center shadow-md shadow-[#8B0000]/20 group-hover:shadow-lg group-hover:shadow-[#8B0000]/30 transition-all">
+                  <Shield className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-lg font-extrabold text-[#3d200a] tracking-tight hidden sm:inline">
+                  Quant<span className="text-[#8B0000]">Warden</span>
+                </span>
+              </Link>
+            </div>
 
             {/* Right: User Profile Dropdown */}
             <div className="flex items-center gap-3">

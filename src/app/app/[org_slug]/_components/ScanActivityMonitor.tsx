@@ -31,6 +31,12 @@ import type {
 } from "@/lib/scan-activity-types";
 
 function batchLabel(type: ScanActivityBatch["type"], engine: ScanEngine) {
+  if (engine === "subdomainDiscovery") {
+    if (type === "full") return "Full Subdomain Discovery";
+    if (type === "group") return "Group Subdomain Discovery";
+    return "Subdomain Discovery";
+  }
+
   if (engine === "portDiscovery") {
     if (type === "full") return "Full Port Discovery";
     if (type === "group") return "Group Port Discovery";
@@ -43,7 +49,9 @@ function batchLabel(type: ScanActivityBatch["type"], engine: ScanEngine) {
 }
 
 function engineServiceLabel(engine: ScanEngine | null | undefined) {
-  return engine === "portDiscovery" ? "Nmap API" : "OpenSSL scanning endpoint";
+  if (engine === "portDiscovery") return "Nmap API";
+  if (engine === "subdomainDiscovery") return "Subfinder API";
+  return "OpenSSL scanning endpoint";
 }
 
 function sourceBadgeMeta(source: ScanBatchSource) {
@@ -768,6 +776,7 @@ function UpcomingQueueSection({
   );
 }
 
+
 export default function ScanActivityMonitor({
   orgId,
   orgSlug,
@@ -810,6 +819,7 @@ export default function ScanActivityMonitor({
   } = useScanActivity(orgId, {
     orgSlug,
   });
+
 
   const latestBatch = activity?.latestBatch || null;
   const upcomingQueue = activity?.upcomingQueue || [];
@@ -1458,6 +1468,7 @@ export default function ScanActivityMonitor({
                     cancellingRunId={cancellingQueueRunId}
                     onCancel={handleCancelQueuedRun}
                   />
+
 
                   {shouldShowLiveScanPanel && liveScanBatch && (
                     <BatchSection batch={liveScanBatch} />

@@ -16,7 +16,7 @@ interface CreateBatchBody {
 }
 
 const VALID_TYPES = new Set<ScanBatchType>(["single", "group", "full"]);
-const VALID_ENGINES = new Set<ScanEngine>(["openssl", "portDiscovery"]);
+const VALID_ENGINES = new Set<ScanEngine>(["openssl", "portDiscovery", "subdomainDiscovery"]);
 
 export async function POST(req: NextRequest) {
   try {

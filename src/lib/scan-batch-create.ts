@@ -43,7 +43,7 @@ export function isCreateScanBatchFailure(result: CreateScanBatchResult): result 
 }
 
 const VALID_TYPES = new Set<ScanBatchType>(["single", "group", "full"]);
-const VALID_ENGINES = new Set<ScanEngine>(["openssl", "portDiscovery"]);
+const VALID_ENGINES = new Set<ScanEngine>(["openssl", "portDiscovery", "subdomainDiscovery"]);
 
 function lockMessage(lock: ActiveLockRow) {
   if (lock.engine === "portDiscovery") {
@@ -107,7 +107,9 @@ export async function createScanBatch(input: CreateScanBatchInput): Promise<Crea
     const assetTypeFilter =
       engine === "portDiscovery"
         ? `type IN ('domain', 'ip')`
-        : `type = 'domain'`;
+        : engine === "subdomainDiscovery"
+          ? `type = 'domain' AND "isRoot" = true`
+          : `type = 'domain'`;
 
     const assetRows = await tx.$queryRawUnsafe<{ id: string; value: string; openPorts: string | null }[]>(
       `SELECT id, value, "openPorts"
@@ -237,6 +239,7 @@ export async function createScanBatch(input: CreateScanBatchInput): Promise<Crea
         now
       );
     } else {
+      // portDiscovery and subdomainDiscovery — no port columns needed
       await tx.$executeRawUnsafe(
         `INSERT INTO "asset_scan" (id, "assetId", "batchId", type, status, "createdAt")
          SELECT scan_row.scan_id, scan_row.asset_id, $3, $4, 'pending', $5

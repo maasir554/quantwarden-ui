@@ -25,6 +25,10 @@ import {
   Telescope,
   CheckCircle2,
   TriangleAlert,
+  Eye,
+  EyeOff,
+  SlidersHorizontal,
+  ScanLine,
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
 import {
@@ -289,6 +293,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const orgAssets: any[] = org.assets || [];
   const portInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryCompletionToastRef = useRef<string | null>(null);
+  const opensslCompletionToastRef = useRef<string | null>(null);
+  // Seeded to true once activity first loads — prevents toasting for pre-existing completed batches
+  const completionRefsSeeded = useRef(false);
   const portDiscoveryListInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryActivitySignatureRef = useRef<string | null>(null);
   const {
@@ -297,6 +304,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     pendingBatchType,
     pendingBatchEngine,
     openMonitor,
+    refreshActivity,
   } = useScanActivity(org.id, {
     orgSlug: org.slug,
   });
@@ -312,12 +320,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       value: a.value,
       type: getAssetType(a.value),
       addedAt: new Date(a.createdAt).toISOString(),
-      scanning: a.scanStatus === 'scanning',
+      // Never restore scanning state from DB — it can be stale.
+      // The workflow poller and manual SSE handler set scanning:true when needed.
+      scanning: false,
       scanStatus: a.scanStatus,
       portDiscoveryStatus: a.portDiscoveryStatus,
       resolvedIp: a.resolvedIp ?? null,
       openPorts: parseOpenPorts(a.openPorts),
-      statusMessage: a.scanStatus === 'scanning' ? "Scanning in background..." : "",
+      statusMessage: "",
       subdomains: orgAssets.filter(leaf => leaf.parentId === a.id).map(l => l.value),
     }));
   });
@@ -371,14 +381,19 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [isSavingPortDiscoveryConfig, setIsSavingPortDiscoveryConfig] = useState(false);
   const [isStartingPortDiscovery, setIsStartingPortDiscovery] = useState(false);
 
-  // === Discovery Queue ===
-  const [discoverQueue, setDiscoverQueue] = useState<string[]>([]);
+  // === Subdomain Discovery ===
+  const [isStartingSubdomainDiscovery, setIsStartingSubdomainDiscovery] = useState(false);
 
   // === Search / View ===
   const [rootSearch, setRootSearch] = useState("");
   const [leafSearch, setLeafSearch] = useState("");
   const [rootOpen, setRootOpen] = useState(true);
   const [leafOpen, setLeafOpen] = useState(true);
+  // IDs of root assets whose children are shown in leaf section (empty = show all)
+  const [leafParentFilter, setLeafParentFilter] = useState<string[]>([]);
+  const [showLeafFilterModal, setShowLeafFilterModal] = useState(false);
+  // Temp selection inside the modal before Apply
+  const [leafFilterDraft, setLeafFilterDraft] = useState<string[]>([]);
   const hasDuplicatePortEntries = (() => {
     const seen = new Set<string>();
     for (const port of assetPorts) {
@@ -505,12 +520,15 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
           return {
             ...asset,
-            scanning: asset.scanning && fresh.scanStatus === "scanning",
+            // Keep scanning:true during an active in-memory scan (manual SSE or workflow poller),
+            // but never re-derive it from the DB scanStatus column — that value can be stale.
+            scanning: asset.scanning,
             scanStatus: fresh.scanStatus,
             portDiscoveryStatus: fresh.portDiscoveryStatus,
             resolvedIp: fresh.resolvedIp ?? null,
             openPorts: parseOpenPorts(fresh.openPorts),
-            statusMessage: asset.scanning && fresh.scanStatus !== "scanning" ? "" : asset.statusMessage,
+            // statusMessage is managed by the SSE / workflow poller — keep in-memory value
+            statusMessage: asset.statusMessage,
             subdomains: Array.from(
               new Set([
                 ...asset.subdomains,
@@ -827,6 +845,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       }).then(res => res.json()).then(data => {
          if(data.asset) {
             setRootAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id } : a));
+            // Poll immediately and again after a short delay so the worker has time to queue the batch
+            void refreshActivity();
+            setTimeout(() => { void refreshActivity(); }, 3000);
          }
       }).catch(console.error);
     });
@@ -872,6 +893,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       }).then(res => res.json()).then(data => {
          if(data.asset) {
             setLeafAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id } : a));
+            // Poll immediately and again after a short delay so the worker has time to queue the batch
+            void refreshActivity();
+            setTimeout(() => { void refreshActivity(); }, 3000);
          }
       }).catch(console.error);
     });
@@ -1105,29 +1129,136 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setLeafAssets(leafAssets.filter((a) => a.id !== id));
     fetch(`/api/orgs/assets?id=${id}&orgId=${org.id}`, { method: 'DELETE' }).catch(console.error);
   };
-
-  // === Queue Processor ===
+  // === Automated workflow status poller ===
+  // Marks a root domain as "scanning" when the background worker is running
+  // subdomain_discovery for it, making the automated step visible in the domain row.
   useEffect(() => {
-    const activeCount = rootAssets.filter(a => a.scanning).length;
-    if (activeCount < 2 && discoverQueue.length > 0) {
-      const nextId = discoverQueue[0];
-      setDiscoverQueue(q => q.slice(1));
-      startDiscovery(nextId);
-    }
-  }, [discoverQueue, rootAssets]);
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let alive = true;
+    // Track which workflow IDs we've already acted on so we can detect transitions
+    const seenRunning = new Set<string>();
+    const seenDone = new Set<string>();
 
-  const handleScanSubdomains = (id: string, e?: React.MouseEvent) => {
+    const poll = async () => {
+      if (!alive) return;
+      try {
+        const res = await fetch(`/api/orgs/workflow-status?orgId=${encodeURIComponent(org.id)}`, { cache: "no-store" });
+        if (!res.ok || !alive) return;
+        const json = await res.json() as {
+          workflows?: Array<{
+            id: string;
+            workflowType: string;
+            currentStep: string;
+            status: string;
+            triggerAssetId?: string;
+          }>;
+        };
+        const workflows = json.workflows || [];
+
+        // Which asset IDs are currently in subdomain_discovery running/pending
+        const activeDiscoveryAssetIds = new Set<string>();
+        for (const wf of workflows) {
+          if (
+            wf.currentStep === "subdomain_discovery" &&
+            (wf.status === "running" || wf.status === "pending") &&
+            wf.triggerAssetId
+          ) {
+            activeDiscoveryAssetIds.add(wf.triggerAssetId);
+            if (!seenRunning.has(wf.id)) {
+              seenRunning.add(wf.id);
+              // Mark the domain row as scanning
+              setRootAssets((prev) =>
+                prev.map((a) =>
+                  a.id === wf.triggerAssetId
+                    ? { ...a, scanning: true, statusMessage: "Discovering subdomains..." }
+                    : a
+                )
+              );
+            }
+          }
+
+          // Step moved past subdomain_discovery — clear indicator and refresh assets
+          if (
+            wf.workflowType === "onboarding" &&
+            wf.currentStep !== "subdomain_discovery" &&
+            wf.triggerAssetId &&
+            seenRunning.has(wf.id) &&
+            !seenDone.has(wf.id)
+          ) {
+            seenDone.add(wf.id);
+            // Clear the scanning state for this domain
+            setRootAssets((prev) =>
+              prev.map((a) =>
+                a.id === wf.triggerAssetId
+                  ? { ...a, scanning: false, statusMessage: "" }
+                  : a
+              )
+            );
+            // Refresh full asset list so newly discovered subdomains appear
+            void fetchAssets();
+          }
+        }
+
+        // Also clear any domains no longer in active discovery
+        if (seenRunning.size > 0) {
+          setRootAssets((prev) =>
+            prev.map((a) => {
+              if (a.scanning && a.statusMessage === "Discovering subdomains..." && !activeDiscoveryAssetIds.has(a.id)) {
+                return { ...a, scanning: false, statusMessage: "" };
+              }
+              return a;
+            })
+          );
+        }
+      } catch {
+        // non-critical — ignore errors
+      }
+    };
+
+    void poll();
+    pollTimer = setInterval(() => { void poll(); }, 5000);
+
+    return () => {
+      alive = false;
+      if (pollTimer !== null) clearInterval(pollTimer);
+    };
+  }, [org.id, fetchAssets]);
+
+  // === Subdomain Discovery Batch Dispatch ===
+  async function handleDiscoverSubdomains(assetIds: string[], type: "single" | "group" | "full", e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    if (rootAssets.find(a => a.id === id)?.scanning) return;
-    const asset = rootAssets.find((a) => a.id === id);
-    setDiscoverQueue(q => q.includes(id) ? q : [...q, id]);
-    if (asset) {
-      toast.info("Subdomain discovery started.", {
-        description: `Scanning ${asset.value} for subdomains.`,
+    if (isStartingSubdomainDiscovery) return;
+    setIsStartingSubdomainDiscovery(true);
+    try {
+      const res = await fetch("/api/orgs/scans/batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgId: org.id, engine: "subdomainDiscovery", type, assetIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error("Subdomain discovery failed to start.", {
+          description: data?.error || "Please try again.",
+          position: "bottom-right",
+        });
+        return;
+      }
+      toast.info("Subdomain discovery queued.", {
+        description: type === "single"
+          ? `Discovering subdomains for ${rootAssets.find(a => a.id === assetIds[0])?.value ?? "the selected domain"}.`
+          : `Group subdomain discovery for ${assetIds.length} domains queued.`,
         position: "bottom-right",
       });
+      refreshActivity();
+    } catch (err: any) {
+      toast.error("Subdomain discovery failed to start.", {
+        description: err?.message || "Network error.",
+        position: "bottom-right",
+      });
+    } finally {
+      setIsStartingSubdomainDiscovery(false);
     }
-  };
+  }
 
   const openDiscoveredAssetsModal = (
     sourceValue: string,
@@ -1192,96 +1323,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     );
   };
 
-  const startDiscovery = (id: string) => {
-    setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: true, statusMessage: "Initializing stream..." } : a));
-    
-    const es = new EventSource(`/api/orgs/discover?assetId=${id}&orgId=${org.id}`);
-    
-    es.addEventListener("status", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: data.message } : a));
-      } catch(err){}
-    });
-
-    es.addEventListener("ping", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: data.message } : a));
-      } catch(err){}
-    });
-
-    es.addEventListener("done", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        const asset = rootAssets.find((a) => a.id === id);
-        if (data.subdomains && data.subdomains.length > 0) {
-          const discoveredAssets = data.subdomains.map((subAsset: any) => ({
-            id: subAsset.id,
-            value: subAsset.value,
-            type: getAssetType(subAsset.value),
-            openPorts: parseOpenPorts(subAsset.openPorts),
-          }));
-          setLeafAssets(prev => {
-             const existing = new Set(prev.map(p => p.value));
-             const newLeafs = data.subdomains.filter((s:any) => !existing.has(s.value));
-             return [...prev, ...newLeafs];
-          });
-          setRootAssets(prev => prev.map(a => a.id === id ? { 
-            ...a, 
-            scanning: false, 
-            statusMessage: "", 
-            subdomains: Array.from(new Set([...a.subdomains, ...data.subdomains.map((s:any)=>s.value)]))
-          } : a));
-          showDiscoveryCompletionToast(asset?.value || "Asset", discoveredAssets);
-        } else {
-          setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: "No subdomains found" } : a));
-          showDiscoveryCompletionToast(asset?.value || "Asset", []);
-          setTimeout(() => {
-            setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: "" } : a));
-          }, 5000);
-        }
-      } catch(err) {
-        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: "" } : a));
-      }
-      es.close();
-    });
-
-    es.addEventListener("error", (e) => {
-      let msg = "Connection error";
-      let code = "";
-      try { 
-        const d = JSON.parse((e as unknown as MessageEvent).data); 
-        if(d.message) msg = d.message; 
-        if (d.code) code = d.code;
-      } catch (err) {}
-      
-      setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: msg } : a));
-
-      const serviceDown =
-        code === "SUBFINDER_UNAVAILABLE" ||
-        /subfinder failed|fetch failed|connection refused|service unavailable|econnrefused|enotfound/i.test(msg);
-
-      if (serviceDown) {
-        toast.error("Subdomain discovery is unavailable.", {
-          description: "The Subfinder server appears to be down. Please contact support to turn on the Subfinder server.",
-          position: "bottom-right",
-        });
-      } else {
-        toast.error("Subdomain discovery failed.", {
-          description: msg,
-          position: "bottom-right",
-        });
-      }
-
-      setTimeout(() => {
-        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: "" } : a));
-      }, 5000);
-      
-      es.close();
-    });
-  };
-
   // === Background Sync ===
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1303,15 +1344,16 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const filteredRoot = rootAssets.filter((a) =>
     a.value.toLowerCase().includes(rootSearch.toLowerCase())
   );
-  const filteredLeaf = leafAssets.filter((a) =>
-    a.value.toLowerCase().includes(leafSearch.toLowerCase())
-  );
+  const filteredLeaf = leafAssets.filter((a) => {
+    const matchesSearch = a.value.toLowerCase().includes(leafSearch.toLowerCase());
+    const matchesParent =
+      leafParentFilter.length === 0 || leafParentFilter.includes(a.parentId ?? "");
+    return matchesSearch && matchesParent;
+  });
   const discoverableRootDomains = rootAssets.filter(
-    (asset) => asset.type === "domain" && !asset.scanning && !discoverQueue.includes(asset.id)
+    (asset) => asset.type === "domain"
   );
-  const bulkDiscoveryInProgress = rootAssets.some(
-    (asset) => asset.type === "domain" && (asset.scanning || discoverQueue.includes(asset.id))
-  );
+  const bulkDiscoveryInProgress = isStartingSubdomainDiscovery;
 
   useEffect(() => {
     const signature = activePortDiscoveryBatches
@@ -1328,6 +1370,16 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       void fetchAssets();
     }
   }, [activePortDiscoveryBatches, fetchAssets]);
+
+  // Seed completion refs on first activity load so we don't toast for batches completed before the page opened.
+  // Declared before the toast effects so React runs it first (effects fire in declaration order).
+  useEffect(() => {
+    if (completionRefsSeeded.current || !activity) return;
+    completionRefsSeeded.current = true;
+    const batch = activity.latestCompletedBatch;
+    if (batch?.engine === "portDiscovery") portDiscoveryCompletionToastRef.current = batch.id;
+    if (batch?.engine === "openssl") opensslCompletionToastRef.current = batch.id;
+  }, [activity]);
 
   useEffect(() => {
     const latestCompletedPortBatch =
@@ -1352,6 +1404,40 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
     void fetchAssets();
   }, [activity?.latestCompletedBatch, fetchAssets]);
+
+  // OpenSSL scan completion toast
+  useEffect(() => {
+    const latestCompletedOpensslBatch =
+      activity?.latestCompletedBatch?.engine === "openssl" ? activity.latestCompletedBatch : null;
+
+    if (!latestCompletedOpensslBatch) return;
+    if (opensslCompletionToastRef.current === latestCompletedOpensslBatch.id) return;
+
+    opensslCompletionToastRef.current = latestCompletedOpensslBatch.id;
+
+    const isAutomated = latestCompletedOpensslBatch.source === "automated";
+
+    if (latestCompletedOpensslBatch.status === "completed") {
+      toast.success(
+        isAutomated ? "Automated SSL scan complete." : "SSL scan completed.",
+        {
+          description: `${latestCompletedOpensslBatch.completedAssets} asset${latestCompletedOpensslBatch.completedAssets !== 1 ? "s" : ""} scanned successfully.`,
+          position: "bottom-right",
+          action: isAutomated
+            ? { label: "View", onClick: () => openMonitor() }
+            : undefined,
+        }
+      );
+    } else if (latestCompletedOpensslBatch.status === "failed") {
+      toast.error("SSL scan finished with issues.", {
+        description: "Check the activity monitor for details.",
+        position: "bottom-right",
+        action: { label: "View", onClick: () => openMonitor() },
+      });
+    }
+
+    void fetchAssets();
+  }, [activity?.latestCompletedBatch, fetchAssets, openMonitor, org.id]);
 
   // === Render Asset Row (Root) ===
   const renderRootAssetRow = (asset: typeof rootAssets[0]) => {
@@ -1435,20 +1521,45 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
           {asset.type === "domain" && canManageAssets && (
             <ActionTooltip content="Discover subdomains">
               <button
-                onClick={(e) => handleScanSubdomains(asset.id, e)}
-                disabled={asset.scanning || discoverQueue.includes(asset.id)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/20 bg-white text-[#8B0000] opacity-0 transition-all hover:bg-[#8B0000]/8 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50 cursor-pointer"
+                onClick={(e) => handleDiscoverSubdomains([asset.id], "single", e)}
+                disabled={isStartingSubdomainDiscovery}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/18 bg-white text-[#8B0000]/70 shadow-sm transition hover:bg-[#8B0000]/5 hover:text-[#8B0000] disabled:cursor-not-allowed disabled:opacity-50 opacity-0 group-hover:opacity-100"
               >
-                {asset.scanning || discoverQueue.includes(asset.id) ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                {isStartingSubdomainDiscovery ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Network className="w-3.5 h-3.5" />
+                  <ScanLine className="h-3.5 w-3.5" />
                 )}
               </button>
             </ActionTooltip>
           )}
 
-          {/* Remove */}
+          {/* View subdomains — eye filter button */}
+          {asset.type === "domain" && asset.subdomains.length > 0 && (
+            <ActionTooltip content={leafParentFilter.includes(asset.id) ? "Clear subdomain filter" : "View subdomains"}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLeafParentFilter((prev) =>
+                    prev.includes(asset.id)
+                      ? prev.filter((id) => id !== asset.id)
+                      : [...prev, asset.id]
+                  );
+                  setLeafOpen(true);
+                }}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100 ${
+                  leafParentFilter.includes(asset.id)
+                    ? "border-violet-300/50 bg-violet-50 text-violet-600"
+                    : "border-amber-300/30 bg-white text-[#8a5d33] hover:bg-amber-50"
+                }`}
+              >
+                {leafParentFilter.includes(asset.id)
+                  ? <EyeOff className="h-3.5 w-3.5" />
+                  : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </ActionTooltip>
+          )}
           {canManageAssets && (
             <button
               onClick={(e) => { e.stopPropagation(); handleRemoveRoot(asset.id); }}
@@ -1657,9 +1768,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     <button
                       type="button"
                       onClick={() => {
-                        discoverableRootDomains.forEach(a => handleScanSubdomains(a.id));
+                        const ids = discoverableRootDomains.map(a => a.id);
+                        void handleDiscoverSubdomains(ids, ids.length === 1 ? "single" : "group");
                       }}
-                      disabled={discoverableRootDomains.length === 0 || bulkDiscoveryInProgress}
+                      disabled={discoverableRootDomains.length === 0 || isStartingSubdomainDiscovery}
                       className="inline-flex whitespace-nowrap items-center justify-center gap-2 rounded-full bg-[#8B0000] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#730000] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {bulkDiscoveryInProgress ? (
@@ -1694,7 +1806,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     <span className="flex items-center gap-1.5">
                       <Clock className="h-3 w-3" />
                       {rootAssets.filter(a => a.scanning).length} Active
-                      {discoverQueue.length > 0 && <span className="text-[#8B0000]">{discoverQueue.length} Queued</span>}
                     </span>
                   </div>
                 )}
@@ -1733,17 +1844,42 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
               {leafOpen && (
                 <div
-                  className="relative w-full cursor-default sm:w-[260px]"
+                  className="relative flex items-center gap-2 w-full cursor-default sm:w-auto"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a5d33]/30" />
-                  <input
-                    type="text"
-                    value={leafSearch}
-                    onChange={(e) => setLeafSearch(e.target.value)}
-                    placeholder="Search leaf assets..."
-                    className="w-full rounded-xl border border-amber-500/15 bg-amber-50/50 py-2 pl-9 pr-3 text-xs text-[#3d200a] placeholder:text-[#8a5d33]/30 transition-all focus:outline-none focus:ring-1 focus:ring-[#8B0000]/30"
-                  />
+                  {/* Parent filter badge */}
+                  <ActionTooltip content={leafParentFilter.length > 0 ? `Filtering by ${leafParentFilter.length} domain${leafParentFilter.length !== 1 ? "s" : ""}` : "Filter by parent domain"}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeafFilterDraft(leafParentFilter);
+                        setShowLeafFilterModal(true);
+                      }}
+                      className={`relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all ${
+                        leafParentFilter.length > 0
+                          ? "border-violet-300/60 bg-violet-50 text-violet-600 hover:bg-violet-100"
+                          : "border-amber-400/20 bg-amber-50/60 text-[#8a5d33]/50 hover:bg-amber-100/60 hover:text-[#8a5d33]"
+                      }`}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      {leafParentFilter.length > 0 && (
+                        <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-violet-500 text-[8px] font-bold text-white">
+                          {leafParentFilter.length}
+                        </span>
+                      )}
+                    </button>
+                  </ActionTooltip>
+
+                  <div className="relative sm:w-[230px] w-full">
+                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a5d33]/30" />
+                    <input
+                      type="text"
+                      value={leafSearch}
+                      onChange={(e) => setLeafSearch(e.target.value)}
+                      placeholder="Search leaf assets..."
+                      className="w-full rounded-xl border border-amber-500/15 bg-amber-50/50 py-2 pl-9 pr-3 text-xs text-[#3d200a] placeholder:text-[#8a5d33]/30 transition-all focus:outline-none focus:ring-1 focus:ring-[#8B0000]/30"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -1757,8 +1893,8 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   {filteredLeaf.length === 0 ? (
                     <EmptyState
                       icon={Leaf}
-                      text="No leaf assets"
-                      sub="Scan root domains for subdomains or add them manually."
+                      text={leafParentFilter.length > 0 ? "No subdomains found" : "No leaf assets"}
+                      sub={leafParentFilter.length > 0 ? "The selected domains have no recorded subdomains." : "Scan root domains for subdomains or add them manually."}
                     />
                   ) : (
                     filteredLeaf.map(renderLeafAssetRow)
@@ -1771,6 +1907,131 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       </div>
 
     </section>
+
+    {/* ── Leaf parent filter modal ───────────────────────────── */}
+    {showLeafFilterModal && typeof document !== "undefined" && ReactDOM.createPortal((
+      <div
+        className="fixed inset-0 z-[130] flex items-end justify-center sm:items-center bg-black/30 backdrop-blur-sm p-4"
+        onClick={() => setShowLeafFilterModal(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-2xl border border-amber-300/25 bg-white shadow-2xl overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-amber-200/40 px-5 py-4">
+            <div>
+              <p className="text-sm font-bold text-[#3d200a]">Filter by parent domain</p>
+              <p className="text-[11px] text-[#8a5d33]/70 mt-0.5">
+                Select one or more root domains to show their subdomains.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLeafFilterModal(false)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#8a5d33]/50 hover:bg-amber-50 hover:text-[#8a5d33] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Domain list */}
+          <div className="max-h-72 overflow-y-auto px-3 py-2">
+            {rootAssets.filter((a) => a.type === "domain").length === 0 ? (
+              <p className="py-6 text-center text-xs text-[#8a5d33]/50">No root domains available.</p>
+            ) : (
+              <>
+                {/* Select all */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allDomainIds = rootAssets.filter((a) => a.type === "domain").map((a) => a.id);
+                    const allSelected = allDomainIds.every((id) => leafFilterDraft.includes(id));
+                    setLeafFilterDraft(allSelected ? [] : allDomainIds);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-amber-50/70"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
+                    rootAssets.filter((a) => a.type === "domain").every((a) => leafFilterDraft.includes(a.id))
+                      ? "border-violet-500 bg-violet-500"
+                      : rootAssets.filter((a) => a.type === "domain").some((a) => leafFilterDraft.includes(a.id))
+                        ? "border-violet-400 bg-violet-100"
+                        : "border-amber-300/50 bg-transparent"
+                  }`}>
+                    {rootAssets.filter((a) => a.type === "domain").every((a) => leafFilterDraft.includes(a.id)) && (
+                      <CheckCircle2 className="h-3 w-3 text-white" />
+                    )}
+                  </div>
+                  <span className="text-xs font-semibold text-[#3d200a]">Select all domains</span>
+                </button>
+
+                <div className="my-1.5 border-t border-amber-200/40" />
+
+                {rootAssets.filter((a) => a.type === "domain").map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() =>
+                      setLeafFilterDraft((prev) =>
+                        prev.includes(asset.id)
+                          ? prev.filter((id) => id !== asset.id)
+                          : [...prev, asset.id]
+                      )
+                    }
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-amber-50/70"
+                  >
+                    <div className={`h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
+                      leafFilterDraft.includes(asset.id)
+                        ? "border-violet-500 bg-violet-500"
+                        : "border-amber-300/50 bg-transparent"
+                    }`}>
+                      {leafFilterDraft.includes(asset.id) && (
+                        <CheckCircle2 className="h-3 w-3 text-white" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-[#3d200a]">{asset.value}</p>
+                      {asset.subdomains.length > 0 && (
+                        <p className="text-[10px] text-[#8a5d33]/60">
+                          {asset.subdomains.length} subdomain{asset.subdomains.length !== 1 ? "s" : ""}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between gap-3 border-t border-amber-200/40 px-5 py-3">
+            <button
+              type="button"
+              onClick={() => {
+                setLeafFilterDraft([]);
+                setLeafParentFilter([]);
+                setShowLeafFilterModal(false);
+              }}
+              className="text-xs font-medium text-[#8a5d33]/70 hover:text-[#8a5d33] transition-colors"
+            >
+              Clear filter
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLeafParentFilter(leafFilterDraft);
+                if (leafFilterDraft.length > 0) setLeafOpen(true);
+                setShowLeafFilterModal(false);
+              }}
+              className="rounded-xl bg-[#8B0000] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#6d0000] disabled:opacity-50"
+            >
+              Apply{leafFilterDraft.length > 0 ? ` (${leafFilterDraft.length})` : ""}
+            </button>
+          </div>
+        </div>
+      </div>
+    ), document.body)}
+
     {canManageAssets && showAddModal && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
         className="fixed inset-0 z-[120] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"

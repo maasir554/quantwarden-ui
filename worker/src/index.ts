@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { claimNextPendingScan, listOrganizationsWithActiveScanWork } from "@/lib/scan-batch-server";
 import { runOpenSSLScanItem } from "@/lib/openssl-scan-runner";
 import { runPortDiscoveryItem } from "@/lib/port-discovery-runner";
+import { runSubdomainDiscoveryItem } from "@/lib/subdomain-discovery-runner";
 import { ensureScanSchedulingTables, runSchedulerMaintenanceCycle } from "@/lib/scan-schedule-server";
 import { advanceOrgWorkflows, listOrgsWithPendingWorkflows } from "@/lib/scan-workflow";
 import { ensureWorkflowTable } from "@/lib/scan-workflow-schema";
@@ -242,6 +243,13 @@ async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
           scanId: claimed.scanId,
           batchId: claimed.batchId,
           configSnapshot: claimed.configSnapshot,
+        });
+      } else if (claimed.engine === "subdomainDiscovery") {
+        await runSubdomainDiscoveryItem({
+          orgId,
+          assetId: claimed.assetId,
+          scanId: claimed.scanId,
+          batchId: claimed.batchId,
         });
       } else {
         await runOpenSSLScanItem({

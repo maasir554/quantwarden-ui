@@ -15,6 +15,7 @@ export interface WorkflowStatusEntry {
   currentStep: "subdomain_discovery" | "port_discovery" | "openssl" | "done";
   status: "pending" | "running" | "completed" | "failed" | "skipped";
   activeBatchId: string | null;
+  triggerAssetId: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
 
     const rows = await prisma.$queryRawUnsafe<WorkflowStatusEntry[]>(
       `SELECT id, "workflowType", "currentStep", status, "activeBatchId",
-              "createdAt", "updatedAt"
+              "triggerAssetId", "createdAt", "updatedAt"
        FROM "org_scan_workflow"
        WHERE "organizationId" = $1
          AND "createdAt" > NOW() - INTERVAL '24 hours'

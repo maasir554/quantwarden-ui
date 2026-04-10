@@ -775,11 +775,14 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
           const json = await res.json() as { workflows?: Array<{ id: string; workflowType: string; currentStep: string; status: string }> };
           const workflows = json.workflows || [];
           for (const wf of workflows) {
-            const runningKey = `${wf.id}:${wf.currentStep}:running`;
+            // Use a stable key tied to the subdomain_discovery step, not wf.currentStep
+            // (currentStep may have already advanced by the time we first poll)
+            const subdomainRunningKey = `${wf.id}:subdomain_discovery:running`;
             const doneKey = `${wf.id}:subdomain_discovery:done`;
+
             if (wf.currentStep === "subdomain_discovery" && (wf.status === "running" || wf.status === "pending")) {
-              if (!workflowSeenRef.current.has(runningKey)) {
-                workflowSeenRef.current.add(runningKey);
+              if (!workflowSeenRef.current.has(subdomainRunningKey)) {
+                workflowSeenRef.current.add(subdomainRunningKey);
                 toast.info("Discovering subdomains automatically…", {
                   id: `wf-subdomain-${wf.id}`,
                   duration: 30000,
@@ -787,19 +790,24 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
                 });
               }
             }
-            // Subdomain discovery finished (step advanced past it)
-            if (wf.currentStep !== "subdomain_discovery" && wf.workflowType === "onboarding") {
-              if (!workflowSeenRef.current.has(doneKey)) {
-                workflowSeenRef.current.add(doneKey);
-                toast.dismiss(`wf-subdomain-${wf.id}`);
-                toast.success("Subdomain discovery complete. Port scan starting…", {
-                  id: `wf-subdomain-done-${wf.id}`,
-                  duration: 6000,
-                  position: "bottom-right",
-                });
-                // Refresh asset activity so new subdomains appear
-                void refreshOrgActivity(options.orgId);
-              }
+
+            // Only fire the "done" toast if we actually observed subdomain_discovery
+            // running in THIS session — prevents firing on every page load for old workflows.
+            if (
+              wf.currentStep !== "subdomain_discovery" &&
+              wf.workflowType === "onboarding" &&
+              workflowSeenRef.current.has(subdomainRunningKey) &&
+              !workflowSeenRef.current.has(doneKey)
+            ) {
+              workflowSeenRef.current.add(doneKey);
+              toast.dismiss(`wf-subdomain-${wf.id}`);
+              toast.success("Subdomain discovery complete. Port scan starting…", {
+                id: `wf-subdomain-done-${wf.id}`,
+                duration: 6000,
+                position: "bottom-right",
+              });
+              // Refresh asset activity so new subdomains appear
+              void refreshOrgActivity(options.orgId);
             }
           }
         } catch {

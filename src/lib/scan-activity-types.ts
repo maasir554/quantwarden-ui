@@ -2,7 +2,7 @@ export type ScanBatchType = "single" | "group" | "full";
 export type ScanBatchStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type ScanItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type ScanHistoryCategory = "passed" | "timeout" | "dnsExpired" | "failed";
-export type ScanEngine = "openssl" | "portDiscovery";
+export type ScanEngine = "openssl" | "portDiscovery" | "subdomainDiscovery";
 export type ScanBatchSource = "manual" | "scheduled" | "automated";
 export type ScanUpcomingStatus = "pending" | "queued";
 
