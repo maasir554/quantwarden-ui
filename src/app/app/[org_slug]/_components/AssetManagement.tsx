@@ -294,10 +294,12 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const portInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryCompletionToastRef = useRef<string | null>(null);
   const opensslCompletionToastRef = useRef<string | null>(null);
+  const subdomainDiscoveryCompletionToastRef = useRef<string | null>(null);
   // Seeded to true once activity first loads — prevents toasting for pre-existing completed batches
   const completionRefsSeeded = useRef(false);
   const portDiscoveryListInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryActivitySignatureRef = useRef<string | null>(null);
+  const subdomainDiscoveryActivitySignatureRef = useRef<string | null>(null);
   const {
     activity,
     createBatch,
@@ -1379,6 +1381,23 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     }
   }, [activePortDiscoveryBatches, fetchAssets]);
 
+  // Refresh asset list in real-time as subdomain discovery batches progress
+  useEffect(() => {
+    const signature = activeSubdomainDiscoveryBatches
+      .map((batch) => `${batch.id}:${batch.status}:${batch.completedAssets}:${batch.failedAssets}`)
+      .join("|");
+
+    if (!signature) {
+      subdomainDiscoveryActivitySignatureRef.current = null;
+      return;
+    }
+
+    if (subdomainDiscoveryActivitySignatureRef.current !== signature) {
+      subdomainDiscoveryActivitySignatureRef.current = signature;
+      void fetchAssets();
+    }
+  }, [activeSubdomainDiscoveryBatches, fetchAssets]);
+
   // Seed completion refs on first activity load so we don't toast for batches completed before the page opened.
   // Declared before the toast effects so React runs it first (effects fire in declaration order).
   useEffect(() => {
@@ -1387,6 +1406,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     const batch = activity.latestCompletedBatch;
     if (batch?.engine === "portDiscovery") portDiscoveryCompletionToastRef.current = batch.id;
     if (batch?.engine === "openssl") opensslCompletionToastRef.current = batch.id;
+    if (batch?.engine === "subdomainDiscovery") subdomainDiscoveryCompletionToastRef.current = batch.id;
   }, [activity]);
 
   useEffect(() => {
@@ -1447,6 +1467,47 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     void fetchAssets();
   }, [activity?.latestCompletedBatch, fetchAssets, openMonitor, org.id]);
 
+  // Subdomain discovery completion toast
+  useEffect(() => {
+    const latestCompletedSubdomainBatch =
+      activity?.latestCompletedBatch?.engine === "subdomainDiscovery" ? activity.latestCompletedBatch : null;
+
+    if (!latestCompletedSubdomainBatch) return;
+    if (subdomainDiscoveryCompletionToastRef.current === latestCompletedSubdomainBatch.id) return;
+
+    subdomainDiscoveryCompletionToastRef.current = latestCompletedSubdomainBatch.id;
+
+    const domainCount = latestCompletedSubdomainBatch.completedAssets;
+    const failedCount = latestCompletedSubdomainBatch.failedAssets;
+    const completedItems = latestCompletedSubdomainBatch.items.filter((item) => item.status === "completed");
+    const totalFound = completedItems.reduce((sum, item) => sum + (item.discoveredCount ?? 0), 0);
+    const totalNew = completedItems.reduce((sum, item) => sum + (item.newCount ?? 0), 0);
+
+    if (latestCompletedSubdomainBatch.status === "completed") {
+      const parts: string[] = [];
+      parts.push(`${domainCount} domain${domainCount !== 1 ? "s" : ""} scanned`);
+      if (totalFound > 0) {
+        parts.push(`${totalFound} subdomain${totalFound !== 1 ? "s" : ""} found`);
+        parts.push(`${totalNew} new`);
+      } else {
+        parts.push("no subdomains found");
+      }
+      toast.success("Subdomain discovery completed.", {
+        description: parts.join(" — ") + ".",
+        position: "bottom-right",
+      });
+    } else if (latestCompletedSubdomainBatch.status === "failed") {
+      toast.error("Subdomain discovery finished with issues.", {
+        description: failedCount > 0
+          ? `${failedCount} domain${failedCount !== 1 ? "s" : ""} failed. Check the activity monitor for details.`
+          : "Check the activity monitor for details.",
+        position: "bottom-right",
+        action: { label: "View", onClick: () => openMonitor() },
+      });
+    }
+
+    void fetchAssets();
+  }, [activity?.latestCompletedBatch, fetchAssets, openMonitor]);
   // === Render Asset Row (Root) ===
   const renderRootAssetRow = (asset: typeof rootAssets[0]) => {
     const Icon = getAssetIcon(asset.type);

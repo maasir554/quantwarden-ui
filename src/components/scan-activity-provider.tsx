@@ -188,30 +188,40 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
       toast.success("Scan completed. Live monitor is now idle.");
     }
 
-    // Detect newly appeared automated batches and notify the user
+    // Detect newly appeared batches and auto-start SSE stream for live progress
     if (hasActiveBatches) {
       const previousBatchIds = new Set(
         (previous.data?.activeBatches || []).map((b) => b.id)
       );
+      let hasNewBatch = false;
       for (const batch of activity.activeBatches) {
-        if (!previousBatchIds.has(batch.id) && batch.source === "automated") {
-          const engineLabel = batch.engine === "portDiscovery" ? "port discovery" : "SSL scan";
-          const typeLabel = batch.type === "full" ? "Full" : batch.type === "group" ? "Group" : "Single";
-          toast.info(`${typeLabel} ${engineLabel} started automatically.`, {
-            id: `auto-batch-${batch.id}`,
-            duration: 8000,
-            position: "bottom-right",
-            action: {
-              label: "View",
-              onClick: () => setMonitorOrgId(orgId),
-            },
-          });
+        if (!previousBatchIds.has(batch.id)) {
+          hasNewBatch = true;
 
-          // Start SSE stream so progress is tracked live
-          const latestState = orgStatesRef.current[orgId] || defaultOrgState;
-          if (latestState.streamIntent === "off" && ensureOrgStreamRef.current) {
-            void ensureOrgStreamRef.current(orgId, "batch-driven", activity);
+          // Show toast for automated batches only
+          if (batch.source === "automated") {
+            const engineLabel = batch.engine === "portDiscovery" ? "port discovery"
+              : batch.engine === "subdomainDiscovery" ? "subdomain discovery"
+              : "SSL scan";
+            const typeLabel = batch.type === "full" ? "Full" : batch.type === "group" ? "Group" : "Single";
+            toast.info(`${typeLabel} ${engineLabel} started automatically.`, {
+              id: `auto-batch-${batch.id}`,
+              duration: 8000,
+              position: "bottom-right",
+              action: {
+                label: "View",
+                onClick: () => setMonitorOrgId(orgId),
+              },
+            });
           }
+        }
+      }
+
+      // Start SSE stream for any new batch (manual or automated) so the UI goes green
+      if (hasNewBatch) {
+        const latestState = orgStatesRef.current[orgId] || defaultOrgState;
+        if (latestState.streamIntent === "off" && ensureOrgStreamRef.current) {
+          void ensureOrgStreamRef.current(orgId, "batch-driven", activity);
         }
       }
     }

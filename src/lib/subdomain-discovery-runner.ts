@@ -77,25 +77,34 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
     .filter((s) => typeof s === "string" && s.trim().length > 0 && s !== domain);
 
   const now = new Date();
+  let newCount = 0;
 
-  // Upsert discovered subdomains as leaf assets
-  for (const sub of uniqueSubs) {
-    try {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO "asset" (id, value, type, "isRoot", "organizationId", verified, "openPorts", "createdAt", "parentId")
-         VALUES ($1, $2, $3, false, $4, false, $5, $6, $7)
-         ON CONFLICT ("organizationId", value) DO NOTHING`,
-        crypto.randomUUID(),
-        sub,
-        getAssetType(sub),
-        orgId,
-        JSON.stringify([{ number: 443, protocol: "tcp" }]),
-        now,
-        assetId
-      );
-    } catch {
-      // Skip duplicates / constraint violations
-    }
+  const newAssets = uniqueSubs.map((sub) => ({
+    id: crypto.randomUUID(),
+    value: sub,
+    type: getAssetType(sub),
+    isRoot: false,
+    organizationId: orgId,
+    verified: false,
+    openPorts: JSON.stringify([{ number: 443, protocol: "tcp" }]),
+    createdAt: now,
+    parentId: assetId,
+  }));
+
+  // Pinpoint exactly which subdomains are newly discovered by cross-referencing with the database
+  const existingRecords = await prisma.asset.findMany({
+    where: { parentId: assetId, value: { in: uniqueSubs } },
+    select: { value: true }
+  });
+  const existingValues = new Set(existingRecords.map((a) => a.value));
+  const trulyNewSubs = uniqueSubs.filter((sub) => !existingValues.has(sub));
+  newCount = trulyNewSubs.length;
+
+  if (newAssets.length > 0) {
+    await prisma.asset.createMany({
+      data: newAssets,
+      skipDuplicates: true,
+    });
   }
 
   // Update root asset lastScanDate
@@ -105,13 +114,13 @@ export async function runSubdomainDiscoveryItem(input: RunSubdomainDiscoveryItem
     assetId
   );
 
-  // Mark scan item completed — store discovered count in resultData
+  // Mark scan item completed — store total found + new count in resultData
   await prisma.$executeRawUnsafe(
     `UPDATE "asset_scan"
      SET status = 'completed', "resultData" = $1, "completedAt" = $2
      WHERE id = $3
        AND status IN ('pending', 'running')`,
-    JSON.stringify({ discoveredCount: uniqueSubs.length, subdomains: uniqueSubs }),
+    JSON.stringify({ discoveredCount: uniqueSubs.length, newCount }),
     now,
     scanId
   );

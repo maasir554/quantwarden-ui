@@ -22,6 +22,10 @@ export interface ScanActivityItem {
   createdAt: string;
   completedAt: string | null;
   error: string | null;
+  /** Number of subdomains discovered (subdomainDiscovery engine only) */
+  discoveredCount?: number;
+  /** Number of newly inserted subdomains (subdomainDiscovery engine only) */
+  newCount?: number;
 }
 
 export interface ScanActivityBatch {

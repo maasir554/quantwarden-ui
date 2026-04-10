@@ -96,6 +96,29 @@ function extractError(resultData: string | null) {
   }
 }
 
+function extractDiscoveredCount(resultData: string | null): number {
+  if (!resultData) return 0;
+  try {
+    const parsed = JSON.parse(resultData);
+    if (typeof parsed?.discoveredCount === "number") return parsed.discoveredCount;
+    if (Array.isArray(parsed?.subdomains)) return parsed.subdomains.length;
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
+function extractNewCount(resultData: string | null): number {
+  if (!resultData) return 0;
+  try {
+    const parsed = JSON.parse(resultData);
+    if (typeof parsed?.newCount === "number") return parsed.newCount;
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 function toPercentComplete(completedAssets: number, failedAssets: number, totalAssets: number) {
   if (totalAssets <= 0) return 0;
   return Math.min(100, Math.round(((completedAssets + failedAssets) / totalAssets) * 100));
@@ -108,6 +131,7 @@ function normalizeBatchSource(source: string | null | undefined): ScanBatchSourc
 }
 
 function toBatch(batch: BatchRow, scans: ScanRow[]): ScanActivityBatch {
+  const isSubdomainEngine = batch.engine === "subdomainDiscovery";
   const items: ScanActivityItem[] = scans.map((scan) => ({
     id: scan.id,
     assetId: scan.assetId,
@@ -118,6 +142,7 @@ function toBatch(batch: BatchRow, scans: ScanRow[]): ScanActivityBatch {
     createdAt: scan.createdAt.toISOString(),
     completedAt: scan.completedAt ? scan.completedAt.toISOString() : null,
     error: scan.status === "failed" ? extractError(scan.resultData) : null,
+    ...(isSubdomainEngine && scan.status === "completed" ? { discoveredCount: extractDiscoveredCount(scan.resultData), newCount: extractNewCount(scan.resultData) } : {}),
   }));
 
   const pendingAssets = items.filter((item) => item.status === "pending").length;
