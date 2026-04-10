@@ -20,6 +20,7 @@ const STREAM_ROTATE_AFTER_MS = 255000;
 const STREAM_NO_ACTIVE_GRACE_CHECKS = 2;
 const LAST_SYNC_STORAGE_PREFIX = "scan-activity-last-sync:";
 const SCAN_REQUEST_TIMEOUT_MS = 20000;
+const WORKFLOW_POLL_INTERVAL_MS = 5000;
 
 interface CreateBatchInput {
   orgId: string;
@@ -154,6 +155,10 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
   const noActiveGraceChecksRef = useRef<Map<string, number>>(new Map());
   // Stable ref to ensureOrgStream to avoid circular dependency with applyActivityState
   const ensureOrgStreamRef = useRef<((orgId: string, intent: StreamIntent, activity?: OrgScanActivityPayload | null) => Promise<void>) | null>(null);
+  // Tracks which workflow+step pairs we've already toasted, so we don't re-fire
+  const workflowSeenRef = useRef<Set<string>>(new Set());
+  // Poller interval IDs per org
+  const workflowPollersRef = useRef<Map<string, number>>(new Map());
 
   const setOrgState = useCallback((orgId: string, nextState: OrgActivityState) => {
     setOrgStates((previous) => {
@@ -760,6 +765,51 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
         .finally(() => {
           setCheckingConnection(options.orgId, false);
         });
+
+      // Start workflow status poller to surface subdomain discovery toasts
+      const pollWorkflowStatus = async () => {
+        if (!subscriptionsRef.current.has(options.orgId)) return;
+        try {
+          const res = await fetch(`/api/orgs/workflow-status?orgId=${encodeURIComponent(options.orgId)}`, { cache: "no-store" });
+          if (!res.ok) return;
+          const json = await res.json() as { workflows?: Array<{ id: string; workflowType: string; currentStep: string; status: string }> };
+          const workflows = json.workflows || [];
+          for (const wf of workflows) {
+            const runningKey = `${wf.id}:${wf.currentStep}:running`;
+            const doneKey = `${wf.id}:subdomain_discovery:done`;
+            if (wf.currentStep === "subdomain_discovery" && (wf.status === "running" || wf.status === "pending")) {
+              if (!workflowSeenRef.current.has(runningKey)) {
+                workflowSeenRef.current.add(runningKey);
+                toast.info("Discovering subdomains automatically…", {
+                  id: `wf-subdomain-${wf.id}`,
+                  duration: 30000,
+                  position: "bottom-right",
+                });
+              }
+            }
+            // Subdomain discovery finished (step advanced past it)
+            if (wf.currentStep !== "subdomain_discovery" && wf.workflowType === "onboarding") {
+              if (!workflowSeenRef.current.has(doneKey)) {
+                workflowSeenRef.current.add(doneKey);
+                toast.dismiss(`wf-subdomain-${wf.id}`);
+                toast.success("Subdomain discovery complete. Port scan starting…", {
+                  id: `wf-subdomain-done-${wf.id}`,
+                  duration: 6000,
+                  position: "bottom-right",
+                });
+                // Refresh asset activity so new subdomains appear
+                void refreshOrgActivity(options.orgId);
+              }
+            }
+          }
+        } catch {
+          // silent — non-critical poller
+        }
+      };
+
+      void pollWorkflowStatus();
+      const pollerId = window.setInterval(() => { void pollWorkflowStatus(); }, WORKFLOW_POLL_INTERVAL_MS);
+      workflowPollersRef.current.set(options.orgId, pollerId);
     }
   }, [ensureOrgStream, refreshOrgActivity, setCheckingConnection, setOrgState, stopOrgStreaming]);
 
@@ -775,6 +825,12 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
         error: null,
         streamStatus: "idle",
       });
+      // Stop workflow poller
+      const pollerId = workflowPollersRef.current.get(orgId);
+      if (pollerId) {
+        window.clearInterval(pollerId);
+        workflowPollersRef.current.delete(orgId);
+      }
       return;
     }
 

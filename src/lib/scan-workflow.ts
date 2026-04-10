@@ -102,7 +102,8 @@ function getSubdomainAssetType(value: string): "domain" | "ip" | "unknown" {
 
 async function runSubdomainDiscovery(
   orgId: string,
-  rootAssetId: string
+  rootAssetId: string,
+  subfinderUrl?: string
 ): Promise<string[]> {
   // Fetch root asset value
   const assetRows = await prisma.$queryRawUnsafe<{ value: string }[]>(
@@ -114,11 +115,11 @@ async function runSubdomainDiscovery(
   if (assetRows.length === 0) return [];
 
   const domain = assetRows[0].value;
-  const subfinderUrl = process.env.SUBFINDER_API_URL || "http://127.0.0.1:8085";
+  const effectiveSubfinderUrl = subfinderUrl || process.env.SUBFINDER_API_URL || "http://127.0.0.1:8085";
 
   let subdomains: string[] = [];
   try {
-    const response = await fetch(`${subfinderUrl}/subdomains`, {
+    const response = await fetch(`${effectiveSubfinderUrl}/subdomains`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ domain }),
@@ -137,8 +138,7 @@ async function runSubdomainDiscovery(
       else if (Array.isArray(data.result)) subdomains = data.result;
     }
   } catch (err: any) {
-    console.warn("[workflow] Subfinder call failed for", domain, err?.message);
-    // Return empty — workflow will still continue to port_discovery for root asset
+    console.warn("[workflow] Subfinder call failed for", domain, "url:", effectiveSubfinderUrl, err?.message);
     return [];
   }
 
@@ -254,7 +254,7 @@ export async function enqueueAssetAddedWorkflow(
 // Workflow advancement (called by worker after each job completes)
 // ---------------------------------------------------------------------------
 
-async function advanceSingleWorkflow(workflow: WorkflowRow): Promise<void> {
+async function advanceSingleWorkflow(workflow: WorkflowRow, subfinderUrl?: string): Promise<void> {
   const orgId = workflow.organizationId;
   const now = new Date();
 
@@ -269,7 +269,7 @@ async function advanceSingleWorkflow(workflow: WorkflowRow): Promise<void> {
 
     let discoveredIds: string[] = [];
     try {
-      discoveredIds = await runSubdomainDiscovery(orgId, workflow.triggerAssetId);
+      discoveredIds = await runSubdomainDiscovery(orgId, workflow.triggerAssetId, subfinderUrl);
     } catch (err: any) {
       console.warn("[workflow] Subdomain discovery failed:", err?.message);
     }
@@ -303,7 +303,7 @@ async function advanceSingleWorkflow(workflow: WorkflowRow): Promise<void> {
       workflow.id
     );
     if (updated[0]) {
-      await advanceSingleWorkflow(updated[0]);
+      await advanceSingleWorkflow(updated[0], subfinderUrl);
     }
     return;
   }
@@ -477,7 +477,7 @@ async function advanceSingleWorkflow(workflow: WorkflowRow): Promise<void> {
       workflow.id
     );
     if (updated[0]) {
-      await advanceSingleWorkflow(updated[0]);
+      await advanceSingleWorkflow(updated[0], subfinderUrl);
     }
   }
 }
@@ -486,7 +486,7 @@ async function advanceSingleWorkflow(workflow: WorkflowRow): Promise<void> {
  * Advance all active workflows for an org.
  * Called by worker: (a) after every scan job completes, (b) on every executor tick.
  */
-export async function advanceOrgWorkflows(orgId: string): Promise<void> {
+export async function advanceOrgWorkflows(orgId: string, subfinderUrl?: string): Promise<void> {
   await ensureWorkflowTable();
 
   const workflows = await prisma.$queryRawUnsafe<WorkflowRow[]>(
@@ -499,7 +499,7 @@ export async function advanceOrgWorkflows(orgId: string): Promise<void> {
 
   for (const workflow of workflows) {
     try {
-      await advanceSingleWorkflow(workflow);
+      await advanceSingleWorkflow(workflow, subfinderUrl);
     } catch (err: any) {
       console.error("[workflow] Error advancing workflow", workflow.id, err?.message);
     }

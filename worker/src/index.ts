@@ -264,7 +264,7 @@ async function launchScanJob(orgId: string, claimed: ClaimedScanItem) {
       refreshActiveWindow(orgId);
 
       // Advance any automated scan workflows for this org now that a batch step finished
-      void advanceOrgWorkflows(orgId).catch((err: any) => {
+      void advanceOrgWorkflows(orgId, config.subfinderUrl).catch((err: any) => {
         logger.warn("Workflow advancement failed after scan job.", {
           orgId,
           scanId: claimed.scanId,
@@ -328,7 +328,7 @@ async function runExecutorTick() {
   const workflowOrgIds = await listOrgsWithPendingWorkflows(config.activeOrgQueryLimit);
   for (const orgId of workflowOrgIds) {
     if (shuttingDown) break;
-    await advanceOrgWorkflows(orgId).catch((err: any) => {
+    await advanceOrgWorkflows(orgId, config.subfinderUrl).catch((err: any) => {
       logger.warn("Workflow tick advancement failed.", {
         orgId,
         message: err?.message || String(err),
