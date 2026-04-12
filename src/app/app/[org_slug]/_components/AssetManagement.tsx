@@ -29,6 +29,7 @@ import {
   EyeOff,
   SlidersHorizontal,
   ScanLine,
+  Calendar,
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
 import {
@@ -382,6 +383,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [isLoadingPortDiscoveryConfig, setIsLoadingPortDiscoveryConfig] = useState(false);
   const [isSavingPortDiscoveryConfig, setIsSavingPortDiscoveryConfig] = useState(false);
   const [isStartingPortDiscovery, setIsStartingPortDiscovery] = useState(false);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [isSchedulingPortDiscovery, setIsSchedulingPortDiscovery] = useState(false);
 
   // === Subdomain Discovery ===
   const [isStartingSubdomainDiscovery, setIsStartingSubdomainDiscovery] = useState(false);
@@ -513,6 +518,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setIsLoadingPortDiscoveryConfig(false);
     setIsSavingPortDiscoveryConfig(false);
     setIsStartingPortDiscovery(false);
+    setShowSchedulePicker(false);
+    setScheduleDate("");
+    setScheduleTime("");
+    setIsSchedulingPortDiscovery(false);
   }, []);
 
   const fetchAssets = useCallback(async () => {
@@ -806,6 +815,69 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       });
     } finally {
       setIsStartingPortDiscovery(false);
+    }
+  };
+
+  const schedulePortDiscovery = async () => {
+    if (!portDiscoveryModal || isSchedulingPortDiscovery) return;
+    if (!portDiscoveryModal.assetIds?.length) {
+      toast.error("No assets to schedule.", { position: "bottom-right" });
+      return;
+    }
+    if (!scheduleDate || !scheduleTime) {
+      toast.error("Select a date and time to schedule the scan.", { position: "bottom-right" });
+      return;
+    }
+
+    const runAt = new Date(`${scheduleDate}T${scheduleTime}`);
+    if (Number.isNaN(runAt.getTime()) || runAt.getTime() <= Date.now()) {
+      toast.error("Schedule time must be in the future.", { position: "bottom-right" });
+      return;
+    }
+
+    const config = normalizePortDiscoveryConfig({
+      entries: portDiscoveryEntries.map((entry) => ({
+        port: Number(entry.portDraft),
+        title: entry.title,
+        enabled: entry.enabled,
+      })),
+      probeBatchSize: Number(portDiscoveryProbeBatchSize),
+      probeTimeoutMs: Number(portDiscoveryProbeTimeoutMs),
+    });
+
+    setIsSchedulingPortDiscovery(true);
+    try {
+      const res = await fetch("/api/orgs/scans/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orgId: org.id,
+          engine: "portDiscovery",
+          type: portDiscoveryModal.mode === "single" ? "single" : "full",
+          mode: "one_time",
+          runAt: runAt.toISOString(),
+          assetIds: portDiscoveryModal.assetIds,
+          configSnapshot: config,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to schedule port discovery.");
+      }
+      toast.success("Port discovery scheduled.", {
+        description: `Scheduled for ${runAt.toLocaleString()}`,
+        position: "bottom-right",
+        action: { label: "View Queue", onClick: () => openMonitor() },
+      });
+      closePortDiscoveryModal();
+    } catch (error) {
+      toast.error("Scheduling failed.", {
+        description: error instanceof Error ? error.message : "Please try again.",
+        position: "bottom-right",
+      });
+    } finally {
+      setIsSchedulingPortDiscovery(false);
     }
   };
 
@@ -2547,6 +2619,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       isStartingPortDiscovery ||
                       isSavingPortDiscoveryConfig ||
                       isLoadingPortDiscoveryConfig ||
+                      isSchedulingPortDiscovery ||
                       portDiscoveryEntryIssues.hasDuplicatePorts ||
                       portDiscoveryEntryIssues.hasInvalidPorts ||
                       portDiscoveryEntryIssues.hasEmptyTitles ||
@@ -2571,6 +2644,67 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       "Scan Now"
                     )}
                   </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowSchedulePicker((v) => !v)}
+                      disabled={
+                        isStartingPortDiscovery ||
+                        isSchedulingPortDiscovery ||
+                        isLoadingPortDiscoveryConfig ||
+                        portDiscoveryEntryIssues.enabledCount === 0
+                      }
+                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-[#fffdf9] text-sm font-bold text-[#3d200a] transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Calendar className="h-3.5 w-3.5" />
+                      Schedule for Later
+                    </button>
+
+                    {showSchedulePicker && (
+                      <div className="mt-2 rounded-2xl border border-amber-200/80 bg-white p-4 shadow-md">
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#8a5d33]/70">Pick date &amp; time</p>
+                        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                          <input
+                            type="date"
+                            value={scheduleDate}
+                            onChange={(e) => setScheduleDate(e.target.value)}
+                            min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
+                            className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                          />
+                          <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={schedulePortDiscovery}
+                          disabled={
+                            isSchedulingPortDiscovery ||
+                            !scheduleDate ||
+                            !scheduleTime ||
+                            portDiscoveryEntryIssues.enabledCount === 0
+                          }
+                          className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-[#3d200a] text-sm font-bold text-white transition-colors hover:bg-[#5b3a1f] disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          {isSchedulingPortDiscovery ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Scheduling...
+                            </>
+                          ) : (
+                            <>
+                              <Calendar className="h-3.5 w-3.5" />
+                              Schedule
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

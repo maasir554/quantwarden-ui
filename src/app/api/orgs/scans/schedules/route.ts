@@ -50,6 +50,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const resolvedAssetIds = Array.isArray(body?.assetIds) ? body.assetIds : [];
+    console.log("[Schedule API] Creating schedule:", {
+      engine: body?.engine,
+      type: body?.type,
+      mode: body?.mode,
+      assetIdsCount: resolvedAssetIds.length,
+      assetIds: resolvedAssetIds.slice(0, 5),
+      rawAssetIdsType: typeof body?.assetIds,
+      rawAssetIdsIsArray: Array.isArray(body?.assetIds),
+    });
+
     const schedule = await createScanSchedule({
       organizationId: orgId,
       createdByUserId: session.user.id,

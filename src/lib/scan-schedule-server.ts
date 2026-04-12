@@ -268,6 +268,11 @@ function validateCommonInput(input: {
   }
 
   const runAt = parseDateOrThrow(input.runAt);
+
+  // Reject scheduling in the past (with 2-minute grace window for clock skew)
+  if (input.mode === "one_time" && runAt.getTime() < Date.now() - 120_000) {
+    throw new Error("Cannot schedule a one-time scan in the past.");
+  }
   const frequency =
     input.mode === "recurring" && input.frequency && VALID_FREQUENCIES.has(input.frequency)
       ? input.frequency

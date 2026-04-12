@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import ReactDOM from "react-dom";
 import Link from "next/link";
 import {
   Check,
@@ -20,6 +21,7 @@ import {
   Square,
   Telescope,
   Zap,
+  X,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
@@ -134,6 +136,15 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
   const [isStoppingBatch, setIsStoppingBatch] = useState(false);
   const [stableAssetCategory, setStableAssetCategory] = useState<Record<string, "successful" | "timeout" | "dnsExpired" | "noTls" | "unscanned">>({});
   const [isHeaderCompact, setIsHeaderCompact] = useState(false);
+  const [scanOptionsModal, setScanOptionsModal] = useState<{
+    type: "single" | "group" | "full";
+    assetIds: string[];
+    label: string;
+  } | null>(null);
+  const [showScanSchedulePicker, setShowScanSchedulePicker] = useState(false);
+  const [scanScheduleDate, setScanScheduleDate] = useState("");
+  const [scanScheduleTime, setScanScheduleTime] = useState("");
+  const [isSchedulingScan, setIsSchedulingScan] = useState(false);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const activitySnapshotRef = useRef<{
     activeCount: number;
@@ -253,50 +264,93 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
   }, [activity, fetchAssets, hydrated]);
 
   const handleScan = async (assetId: string) => {
-    setActionError(null);
-    const result = await createBatch({
+    const asset = assets.find((a) => a.id === assetId);
+    setScanOptionsModal({
       type: "single",
       assetIds: [assetId],
+      label: asset?.value || "1 asset",
+    });
+  };
+
+  const handleScanAll = async () => {
+    const scanableAssetIds = assets
+      .filter((asset) => asset.type === "domain")
+      .map((asset) => asset.id);
+    setScanOptionsModal({
+      type: "full",
+      assetIds: scanableAssetIds,
+      label: `${scanableAssetIds.length} assets`,
+    });
+  };
+
+  const handleGroupScan = async () => {
+    setScanOptionsModal({
+      type: "group",
+      assetIds: selectedAssetIds,
+      label: `${selectedAssetIds.length} selected`,
+    });
+  };
+
+  const closeScanOptionsModal = () => {
+    setScanOptionsModal(null);
+    setShowScanSchedulePicker(false);
+    setScanScheduleDate("");
+    setScanScheduleTime("");
+    setIsSchedulingScan(false);
+  };
+
+  const confirmScan = async () => {
+    if (!scanOptionsModal) return;
+    setActionError(null);
+    const result = await createBatch({
+      type: scanOptionsModal.type,
+      assetIds: scanOptionsModal.assetIds,
     });
 
     if (!result.ok) {
       setActionError(result.error || "Failed to queue scan.");
     } else {
+      if (scanOptionsModal.type !== "single") setSelectedAssetIds([]);
       void fetchAssets();
     }
+    closeScanOptionsModal();
   };
 
-  const handleScanAll = async () => {
-    setActionError(null);
-    const scanableAssetIds = assets
-      .filter((asset) => asset.type === "domain")
-      .map((asset) => asset.id);
-
-    const result = await createBatch({
-      type: "full",
-      assetIds: scanableAssetIds,
-    });
-
-    if (!result.ok) {
-      setActionError(result.error || "Failed to start full scan.");
-    } else {
-      setSelectedAssetIds([]);
-      void fetchAssets();
+  const scheduleScan = async () => {
+    if (!scanOptionsModal) return;
+    if (!scanScheduleDate || !scanScheduleTime) return;
+    if (!scanOptionsModal.assetIds.length) {
+      setActionError("No assets to schedule.");
+      return;
     }
-  };
 
-  const handleGroupScan = async () => {
-    setActionError(null);
-    const result = await createBatch({
-      type: "group",
-      assetIds: selectedAssetIds,
-    });
+    const runAt = new Date(`${scanScheduleDate}T${scanScheduleTime}`);
+    if (Number.isNaN(runAt.getTime()) || runAt.getTime() <= Date.now()) {
+      setActionError("Schedule time must be in the future.");
+      return;
+    }
 
-    if (!result.ok) {
-      setActionError(result.error || "Failed to start group scan.");
-    } else {
-      setSelectedAssetIds([]);
-      void fetchAssets();
+    setIsSchedulingScan(true);
+    try {
+      const res = await fetch("/api/orgs/scans/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orgId: org.id,
+          engine: "openssl",
+          type: scanOptionsModal.type,
+          mode: "one_time",
+          runAt: runAt.toISOString(),
+          assetIds: scanOptionsModal.assetIds,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to schedule scan.");
+      closeScanOptionsModal();
+    } catch {
+      setActionError("Scheduling failed. Please try again.");
+    } finally {
+      setIsSchedulingScan(false);
     }
   };
 
@@ -898,6 +952,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
   };
 
   return (
+    <>
     <div className="h-full flex flex-col bg-white/40 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl overflow-hidden ring-1 ring-amber-500/20">
       <div className={`${isHeaderCompact ? "px-6 py-2 sm:px-8 sm:py-2" : "p-6 sm:p-8"} bg-linear-to-br from-white/80 to-white/40 border-b border-amber-500/10 shrink-0 transition-all duration-300`}>
         <div className={`flex flex-col ${isHeaderCompact ? "gap-1" : "gap-6"} transition-all duration-300`}>
@@ -1423,5 +1478,111 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
         }
       `}</style>
     </div>
+
+    {scanOptionsModal && typeof document !== "undefined" && ReactDOM.createPortal(
+      <div
+        className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+        onClick={closeScanOptionsModal}
+      >
+        <div
+          className="w-full max-w-md overflow-hidden rounded-[1.25rem] border border-amber-200/60 bg-[#fffdf9] shadow-[0_26px_70px_rgba(15,23,42,0.18)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="border-b border-amber-200/60 px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-extrabold text-[#3d200a]">
+                  {scanOptionsModal.type === "full"
+                    ? "Full OpenSSL Scan"
+                    : scanOptionsModal.type === "group"
+                      ? "Group OpenSSL Scan"
+                      : "OpenSSL Scan"}
+                </h3>
+                <p className="mt-1 text-sm font-semibold text-[#8a5d33]/75">
+                  {scanOptionsModal.label}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeScanOptionsModal}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-amber-300/50 bg-[#fffdf9] text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#3d200a]"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="space-y-3 px-6 py-5">
+            <button
+              type="button"
+              onClick={confirmScan}
+              className={`inline-flex h-12 w-full items-center justify-center gap-2.5 rounded-full text-sm font-bold text-white transition-colors ${
+                orgScanLocked
+                  ? "bg-amber-600 hover:bg-amber-700"
+                  : "bg-[#8B0000] hover:bg-[#6d0000]"
+              }`}
+            >
+              <Zap className="h-4 w-4" />
+              {orgScanLocked ? "Queue Now" : "Scan Now"}
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowScanSchedulePicker((v) => !v)}
+                className="inline-flex h-12 w-full items-center justify-center gap-2.5 rounded-full border border-amber-300/50 bg-[#fffdf9] text-sm font-bold text-[#3d200a] transition-colors hover:bg-amber-50"
+              >
+                <Calendar className="h-4 w-4" />
+                Schedule for Later
+              </button>
+
+              {showScanSchedulePicker && (
+                <div className="mt-3 rounded-2xl border border-amber-200/80 bg-white p-4 shadow-md">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#8a5d33]/70">Pick date &amp; time</p>
+                  <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                    <input
+                      type="date"
+                      value={scanScheduleDate}
+                      onChange={(e) => setScanScheduleDate(e.target.value)}
+                      min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
+                      className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                    />
+                    <input
+                      type="time"
+                      value={scanScheduleTime}
+                      onChange={(e) => setScanScheduleTime(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={scheduleScan}
+                    disabled={isSchedulingScan || !scanScheduleDate || !scanScheduleTime}
+                    className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-[#3d200a] text-sm font-bold text-white transition-colors hover:bg-[#5b3a1f] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {isSchedulingScan ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Scheduling...
+                      </>
+                    ) : (
+                      <>
+                        <Calendar className="h-3.5 w-3.5" />
+                        Schedule
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+    </>
   );
 }
