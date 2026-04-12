@@ -7,6 +7,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  CalendarClock,
   ChevronDown,
   CheckCircle2,
   Clock3,
@@ -17,6 +18,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
@@ -793,13 +795,16 @@ export default function ScanActivityMonitor({
   const [showInfoTooltip, setShowInfoTooltip] = useState(false);
   const [showLiveActivityInfoTooltip, setShowLiveActivityInfoTooltip] = useState(false);
   const [showHistoryInfoTooltip, setShowHistoryInfoTooltip] = useState(false);
-  const [monitorPanel, setMonitorPanel] = useState<"live" | "queue" | "history">("live");
+  const [monitorPanel, setMonitorPanel] = useState<"live" | "queue" | "scheduled" | "history">("live");
   const showHistoryPanel = monitorPanel === "history";
   const [openHistoryBatchId, setOpenHistoryBatchId] = useState<string | null>(null);
   const [cancellingQueueRunId, setCancellingQueueRunId] = useState<string | null>(null);
   const [isHeaderCompact, setIsHeaderCompact] = useState(false);
   const [hideHeaderActions, setHideHeaderActions] = useState(false);
   const [isServiceWarningSticky, setIsServiceWarningSticky] = useState(false);
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
   const modalScrollRef = useRef<HTMLDivElement | null>(null);
   const warningProgressBaselineRef = useRef<{ key: string; score: number } | null>(null);
   const {
@@ -820,6 +825,39 @@ export default function ScanActivityMonitor({
   } = useScanActivity(orgId, {
     orgSlug,
   });
+
+  const fetchSchedules = async () => {
+    setSchedulesLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/scans/schedules?orgId=${orgId}`);
+      const data = await res.json().catch(() => ({}));
+      if (data.schedules) {
+        setSchedules(data.schedules);
+      }
+    } catch { /* ignore */ } finally {
+      setSchedulesLoading(false);
+    }
+  };
+
+  const deleteSchedule = async (scheduleId: string) => {
+    setDeletingScheduleId(scheduleId);
+    try {
+      await fetch(`/api/orgs/scans/schedules/${scheduleId}?orgId=${orgId}`, {
+        method: "DELETE",
+      });
+      setSchedules((prev) => prev.filter((s) => s.id !== scheduleId));
+    } catch { /* ignore */ } finally {
+      setDeletingScheduleId(null);
+    }
+  };
+
+  // Fetch schedules when switching to the scheduled tab
+  useEffect(() => {
+    if (monitorPanel === "scheduled" && isMonitorOpen) {
+      void fetchSchedules();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monitorPanel, isMonitorOpen]);
 
 
   const latestBatch = activity?.latestBatch || null;
@@ -886,7 +924,9 @@ export default function ScanActivityMonitor({
   const shouldShowHistoryPanel = hasActiveSharedScan ? showHistoryPanel : true;
   const shouldShowLiveScanPanel = hasActiveSharedScan && monitorPanel === "live";
   const shouldShowQueuePanel = monitorPanel === "queue";
+  const shouldShowScheduledPanel = monitorPanel === "scheduled";
   const queuedBatchCount = activity?.queuedBatchCount ?? 0;
+  const activeScheduleCount = schedules.filter((s: any) => s.enabled).length;
   const historyEntries = activity?.recentHistory || [];
   const headerActionsHideEnter = 72;
   const headerActionsHideExit = 26;
@@ -1303,6 +1343,25 @@ export default function ScanActivityMonitor({
                       </button>
                       <button
                         type="button"
+                        onClick={() => setMonitorPanel("scheduled")}
+                        className={`qw-tip relative inline-flex h-8 items-center justify-center rounded-full border px-3 text-xs font-bold transition ${
+                          monitorPanel === "scheduled"
+                            ? "border-white bg-white text-[#6b0000]"
+                            : "border-white/30 bg-white/12 text-white hover:bg-white/20"
+                        }`}
+                        data-tip="Scheduled scans"
+                        aria-label="Scheduled scans"
+                      >
+                        <CalendarClock className="mr-1 h-3 w-3" />
+                        Scheduled
+                        {activeScheduleCount > 0 && (
+                          <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-extrabold text-white">
+                            {activeScheduleCount}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setMonitorPanel("history")}
                         className={`qw-tip inline-flex h-8 items-center justify-center rounded-full border px-3 text-xs font-bold transition ${
                           monitorPanel === "history"
@@ -1380,6 +1439,24 @@ export default function ScanActivityMonitor({
                     {queuedBatchCount > 0 && (
                       <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
                         {queuedBatchCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMonitorPanel("scheduled")}
+                    className={`qw-tip relative inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2 text-base/none font-semibold transition focus-visible:outline-none focus-visible:ring-2 ${
+                      monitorPanel === "scheduled"
+                        ? "border-white bg-white text-[#6b0000] hover:bg-red-50 focus-visible:ring-white/70"
+                        : "border-white/35 bg-white/14 text-white hover:bg-white/24 focus-visible:ring-white/55"
+                    }`}
+                    data-tip="View scheduled scans"
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    Scheduled
+                    {activeScheduleCount > 0 && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-extrabold text-white">
+                        {activeScheduleCount}
                       </span>
                     )}
                   </button>
@@ -1606,6 +1683,130 @@ export default function ScanActivityMonitor({
                           </div>
                         );
                       })()}
+                    </section>
+                  )}
+
+                  {shouldShowScheduledPanel && (
+                    <section className="space-y-4">
+                      <div>
+                        <h3 className="text-[1.75rem] leading-none font-extrabold tracking-tight text-[#3d200a]">Scheduled Scans</h3>
+                        <p className="mt-2 text-sm font-semibold text-[#8a5d33]/75">
+                          Scans scheduled for later will automatically run at the chosen time and be added to the queue.
+                        </p>
+                      </div>
+
+                      {schedulesLoading ? (
+                        <div className="flex min-h-[200px] items-center justify-center">
+                          <div className="flex items-center gap-3 text-[#8a5d33]/65">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span className="text-sm font-bold">Loading schedules…</span>
+                          </div>
+                        </div>
+                      ) : schedules.length === 0 ? (
+                        <div className="flex min-h-[200px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-blue-500/15 bg-white/50 p-10 text-center">
+                          <CalendarClock className="h-10 w-10 text-[#8a5d33]/25" />
+                          <h3 className="mt-4 text-xl font-black text-[#3d200a]">No scheduled scans</h3>
+                          <p className="mt-2 max-w-md text-sm font-semibold text-[#8a5d33]/70">
+                            Use &ldquo;Schedule for Later&rdquo; from any scan dialog to set up a future scan.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {schedules.map((schedule: any) => {
+                            const isDeleting = deletingScheduleId === schedule.id;
+                            const engineLabel =
+                              schedule.engine === "portDiscovery"
+                                ? "Port Discovery"
+                                : schedule.engine === "openssl"
+                                  ? "OpenSSL Scan"
+                                  : schedule.engine || "Scan";
+                            const typeLabel =
+                              schedule.type === "full"
+                                ? "Full"
+                                : schedule.type === "group"
+                                  ? "Group"
+                                  : schedule.type === "single"
+                                    ? "Single"
+                                    : schedule.type;
+                            const nextRun = schedule.nextRunAt ? new Date(schedule.nextRunAt) : null;
+                            const isPast = nextRun && nextRun.getTime() <= Date.now();
+                            const assetCount = Array.isArray(schedule.assetIds) ? schedule.assetIds.length : 0;
+
+                            return (
+                              <div
+                                key={schedule.id}
+                                className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-[#fffdf9] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <CalendarClock className="h-4 w-4 text-blue-500" />
+                                    <p className="text-sm font-black text-[#3d200a]">{engineLabel} — {typeLabel}</p>
+                                    {schedule.mode === "one_time" && (
+                                      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-blue-700">
+                                        One-time
+                                      </span>
+                                    )}
+                                    {schedule.mode === "recurring" && (
+                                      <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-purple-700">
+                                        Recurring
+                                      </span>
+                                    )}
+                                    {!schedule.enabled && (
+                                      <span className="inline-flex items-center rounded-full border border-stone-200 bg-stone-50 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-stone-500">
+                                        Disabled
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="mt-1 text-sm font-semibold text-[#8a5d33]/80">
+                                    {assetCount} {assetCount === 1 ? "asset" : "assets"}
+                                    {nextRun && (
+                                      <>
+                                        {" • "}
+                                        {isPast ? (
+                                          <span className="text-amber-600">
+                                            Due {formatDistanceToNow(nextRun, { addSuffix: true })}
+                                          </span>
+                                        ) : (
+                                          <>
+                                            Runs {formatDistanceToNow(nextRun, { addSuffix: true })}
+                                            <span className="text-[#8a5d33]/55"> ({nextRun.toLocaleString()})</span>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
+                                    {!nextRun && schedule.enabled && (
+                                      <span className="text-stone-400"> • Completed</span>
+                                    )}
+                                  </p>
+                                  {schedule.createdByEmail && (
+                                    <p className="mt-0.5 text-xs font-semibold text-[#8a5d33]/55">
+                                      by {schedule.createdByName || schedule.createdByEmail}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  {schedule.enabled && nextRun && (
+                                    <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-blue-700">
+                                      Active
+                                    </span>
+                                  )}
+                                  {canScan && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void deleteSchedule(schedule.id)}
+                                      disabled={isDeleting}
+                                      className="inline-flex items-center gap-2 rounded-full border border-red-200/80 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                                    >
+                                      {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </section>
                   )}
 

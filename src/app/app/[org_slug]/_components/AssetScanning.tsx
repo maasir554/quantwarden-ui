@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import ReactDOM from "react-dom";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   Check,
   Fingerprint,
@@ -345,10 +346,20 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
-      if (!res.ok) throw new Error("Failed to schedule scan.");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to schedule scan.");
+      }
+      toast.success("OpenSSL scan scheduled!", {
+        description: `Scheduled for ${runAt.toLocaleString()}`,
+        position: "bottom-right",
+      });
       closeScanOptionsModal();
-    } catch {
-      setActionError("Scheduling failed. Please try again.");
+    } catch (err) {
+      toast.error("Scheduling failed.", {
+        description: err instanceof Error ? err.message : "Please try again.",
+        position: "bottom-right",
+      });
     } finally {
       setIsSchedulingScan(false);
     }
