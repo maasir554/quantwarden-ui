@@ -509,6 +509,7 @@ export async function claimNextPendingScan(orgId: string): Promise<ClaimedScanIt
             AND b.status IN ('queued', 'running')
             AND s.status = 'pending'
           ORDER BY
+            b."createdAt" ASC,
             CASE b.engine
               WHEN 'openssl' THEN 0
               ELSE 1
@@ -518,7 +519,6 @@ export async function claimNextPendingScan(orgId: string): Promise<ClaimedScanIt
               WHEN 'group' THEN 1
               ELSE 2
             END,
-            b."createdAt" ASC,
             s."createdAt" ASC
           LIMIT 1
           FOR UPDATE SKIP LOCKED
@@ -840,14 +840,17 @@ export async function getOrgScanActivity(orgId: string, canScan: boolean): Promi
     }))
   );
   const upcomingQueue = upcomingQueueRows.map(toUpcomingQueueEntry);
-  const lockBatch = hydratedBatches.find(
-    (batch) => batch.status === "queued" || batch.status === "running"
-  ) || null;
+  // The running batch is the one with status 'running', or the first 'queued' if nothing is running yet
+  const runningBatch = activeBatches.find((b) => b.status === "running") || null;
+  const lockBatch = runningBatch || activeBatches[0] || null;
+  // Queued batches are those waiting behind the running/first batch
+  const queuedBatchCount = activeBatches.filter((b) => b.id !== lockBatch?.id).length;
 
   return {
     orgId,
     canScan,
     activeBatches,
+    queuedBatchCount,
     upcomingQueue,
     latestCompletedBatch,
     latestBatch,

@@ -25,6 +25,10 @@ export interface CreateScanBatchSuccess {
   queuedAssets: number;
   batchType: ScanBatchType;
   engine: ScanEngine;
+  /** true when this batch was queued behind an already-active batch */
+  queued: boolean;
+  /** 0 = will run immediately, 1+ = position in queue behind running batch */
+  queuePosition: number;
 }
 
 export interface CreateScanBatchFailure {
@@ -82,27 +86,16 @@ export async function createScanBatch(input: CreateScanBatchInput): Promise<Crea
   const transactionResult = await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, orgId);
 
-    const lockRows = await tx.$queryRawUnsafe<ActiveLockRow[]>(
+    // Count existing active/queued batches to determine queue position
+    const activeBatchRows = await tx.$queryRawUnsafe<ActiveLockRow[]>(
       `SELECT b.id, b.engine, b.type
        FROM "asset_scan_batch" b
        WHERE b."organizationId" = $1
          AND b.status IN ('queued', 'running')
-       ORDER BY b."createdAt" DESC
-       LIMIT 1`,
+       ORDER BY b."createdAt" ASC`,
       orgId
     );
-
-    const lock = lockRows[0] ?? null;
-    if (lock) {
-      return {
-        ok: false as const,
-        status: 409,
-        error: lockMessage(lock),
-        lockBatchId: lock.id,
-        lockEngine: lock.engine,
-        lockType: lock.type,
-      };
-    }
+    const queuePosition = activeBatchRows.length; // 0 = nothing active, will start immediately
 
     const assetTypeFilter =
       engine === "portDiscovery"
@@ -258,6 +251,8 @@ export async function createScanBatch(input: CreateScanBatchInput): Promise<Crea
       queuedAssets: scanTargets.length,
       batchType: type,
       engine,
+      queued: queuePosition > 0,
+      queuePosition,
     };
   }, {
     maxWait: 10_000,

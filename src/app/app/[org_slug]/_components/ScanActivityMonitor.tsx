@@ -793,7 +793,8 @@ export default function ScanActivityMonitor({
   const [showInfoTooltip, setShowInfoTooltip] = useState(false);
   const [showLiveActivityInfoTooltip, setShowLiveActivityInfoTooltip] = useState(false);
   const [showHistoryInfoTooltip, setShowHistoryInfoTooltip] = useState(false);
-  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [monitorPanel, setMonitorPanel] = useState<"live" | "queue" | "history">("live");
+  const showHistoryPanel = monitorPanel === "history";
   const [openHistoryBatchId, setOpenHistoryBatchId] = useState<string | null>(null);
   const [cancellingQueueRunId, setCancellingQueueRunId] = useState<string | null>(null);
   const [isHeaderCompact, setIsHeaderCompact] = useState(false);
@@ -883,7 +884,9 @@ export default function ScanActivityMonitor({
   const hasActiveSharedScan = Boolean(activity?.activeBatches.length);
   const liveScanBatch = activeBatch;
   const shouldShowHistoryPanel = hasActiveSharedScan ? showHistoryPanel : true;
-  const shouldShowLiveScanPanel = hasActiveSharedScan && !showHistoryPanel;
+  const shouldShowLiveScanPanel = hasActiveSharedScan && monitorPanel === "live";
+  const shouldShowQueuePanel = monitorPanel === "queue";
+  const queuedBatchCount = activity?.queuedBatchCount ?? 0;
   const historyEntries = activity?.recentHistory || [];
   const headerActionsHideEnter = 72;
   const headerActionsHideExit = 26;
@@ -954,6 +957,7 @@ export default function ScanActivityMonitor({
     if (!isMonitorOpen) {
       setIsHeaderCompact(false);
       setHideHeaderActions(false);
+      setMonitorPanel("live");
       return;
     }
 
@@ -1031,10 +1035,10 @@ export default function ScanActivityMonitor({
 
   useEffect(() => {
     if (!hasActiveSharedScan) {
-      setShowHistoryPanel(true);
+      setMonitorPanel("history");
       return;
     }
-    setShowHistoryPanel(false);
+    setMonitorPanel("live");
   }, [hasActiveSharedScan]);
 
   const handleStart = async () => {
@@ -1160,11 +1164,16 @@ export default function ScanActivityMonitor({
             <button
               type="button"
               onClick={openMonitor}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white transition hover:bg-white/25"
+              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white transition hover:bg-white/25"
               aria-label="Open activity monitor"
               title="Open activity monitor"
             >
               <Maximize2 className="h-4 w-4" />
+              {queuedBatchCount > 0 && (
+                <span className="absolute -right-1 -top-1 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-extrabold text-white shadow-sm">
+                  {queuedBatchCount}
+                </span>
+              )}
             </button>
             <button
               type="button"
@@ -1262,18 +1271,50 @@ export default function ScanActivityMonitor({
                       {hasActiveSharedScan && (
                         <button
                           type="button"
-                          onClick={() => setShowHistoryPanel((value) => !value)}
-                          className={`qw-tip inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
-                            showHistoryPanel
-                              ? "border-white bg-white text-[#6b0000] hover:bg-red-50"
+                          onClick={() => setMonitorPanel("live")}
+                          className={`qw-tip inline-flex h-8 items-center justify-center rounded-full border px-3 text-xs font-bold transition ${
+                            monitorPanel === "live"
+                              ? "border-white bg-white text-[#6b0000]"
                               : "border-white/30 bg-white/12 text-white hover:bg-white/20"
                           }`}
-                          data-tip={showHistoryPanel ? "Back to Live Scan" : "Scan History"}
-                          aria-label={showHistoryPanel ? "Back to Live Scan" : "Scan History"}
+                          data-tip="Live activity"
+                          aria-label="Live activity"
                         >
-                          {showHistoryPanel ? <ArrowLeft className="h-3.5 w-3.5" /> : <Clock3 className="h-3.5 w-3.5" />}
+                          Live
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => setMonitorPanel("queue")}
+                        className={`qw-tip relative inline-flex h-8 items-center justify-center rounded-full border px-3 text-xs font-bold transition ${
+                          monitorPanel === "queue"
+                            ? "border-white bg-white text-[#6b0000]"
+                            : "border-white/30 bg-white/12 text-white hover:bg-white/20"
+                        }`}
+                        data-tip="Scan queue"
+                        aria-label="Scan queue"
+                      >
+                        Queue
+                        {queuedBatchCount > 0 && (
+                          <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
+                            {queuedBatchCount}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMonitorPanel("history")}
+                        className={`qw-tip inline-flex h-8 items-center justify-center rounded-full border px-3 text-xs font-bold transition ${
+                          monitorPanel === "history"
+                            ? "border-white bg-white text-[#6b0000]"
+                            : "border-white/30 bg-white/12 text-white hover:bg-white/20"
+                        }`}
+                        data-tip="Scan history"
+                        aria-label="Scan history"
+                      >
+                        <Clock3 className="mr-1 h-3 w-3" />
+                        History
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1314,24 +1355,46 @@ export default function ScanActivityMonitor({
                   {hasActiveSharedScan && (
                     <button
                       type="button"
-                      onClick={() => setShowHistoryPanel((value) => !value)}
+                      onClick={() => setMonitorPanel("live")}
                       className={`qw-tip inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2 text-base/none font-semibold transition focus-visible:outline-none focus-visible:ring-2 ${
-                        showHistoryPanel
+                        monitorPanel === "live"
                           ? "border-white bg-white text-[#6b0000] hover:bg-red-50 focus-visible:ring-white/70"
                           : "border-white/35 bg-white/14 text-white hover:bg-white/24 focus-visible:ring-white/55"
                       }`}
-                      data-tip={showHistoryPanel ? "Return to active scan details" : "Open previous scan history"}
+                      data-tip="Active scan details"
                     >
-                      {showHistoryPanel ? (
-                        <>
-                          <ArrowLeft className="h-4 w-4" />
-                          Back to Live Scan
-                        </>
-                      ) : (
-                        "Scan History"
-                      )}
+                      Live
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setMonitorPanel("queue")}
+                    className={`qw-tip relative inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2 text-base/none font-semibold transition focus-visible:outline-none focus-visible:ring-2 ${
+                      monitorPanel === "queue"
+                        ? "border-white bg-white text-[#6b0000] hover:bg-red-50 focus-visible:ring-white/70"
+                        : "border-white/35 bg-white/14 text-white hover:bg-white/24 focus-visible:ring-white/55"
+                    }`}
+                    data-tip="View queued and scheduled scans"
+                  >
+                    Queue
+                    {queuedBatchCount > 0 && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
+                        {queuedBatchCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMonitorPanel("history")}
+                    className={`qw-tip inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2 text-base/none font-semibold transition focus-visible:outline-none focus-visible:ring-2 ${
+                      monitorPanel === "history"
+                        ? "border-white bg-white text-[#6b0000] hover:bg-red-50 focus-visible:ring-white/70"
+                        : "border-white/35 bg-white/14 text-white hover:bg-white/24 focus-visible:ring-white/55"
+                    }`}
+                    data-tip="Previous scan history"
+                  >
+                    Scan History
+                  </button>
                 </div>
               </div>
               <button
@@ -1469,6 +1532,82 @@ export default function ScanActivityMonitor({
                     onCancel={handleCancelQueuedRun}
                   />
 
+                  {shouldShowQueuePanel && (
+                    <section className="space-y-4">
+                      <div>
+                        <h3 className="text-[1.75rem] leading-none font-extrabold tracking-tight text-[#3d200a]">Scan Queue</h3>
+                        <p className="mt-2 text-sm font-semibold text-[#8a5d33]/75">
+                          Batches queued here will execute one-by-one after the currently active scan completes.
+                        </p>
+                      </div>
+
+                      {(() => {
+                        const runningBatch = (activity?.activeBatches || []).find((b) => b.status === "running");
+                        const queuedBatches = (activity?.activeBatches || []).filter(
+                          (b) => b.status === "queued" && b.id !== (runningBatch?.id ?? (activity?.activeBatches || [])[0]?.id)
+                        );
+
+                        if (queuedBatches.length === 0 && upcomingQueue.length === 0) {
+                          return (
+                            <div className="flex min-h-[200px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-amber-500/20 bg-white/50 p-10 text-center">
+                              <Clock3 className="h-10 w-10 text-[#8a5d33]/25" />
+                              <h3 className="mt-4 text-xl font-black text-[#3d200a]">Queue is empty</h3>
+                              <p className="mt-2 max-w-md text-sm font-semibold text-[#8a5d33]/70">
+                                Start a scan while another is running to automatically add it to the queue.
+                              </p>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="space-y-3">
+                            {queuedBatches.map((batch, index) => {
+                              const sourceMeta = sourceBadgeMeta(batch.source);
+                              return (
+                                <div
+                                  key={batch.id}
+                                  className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-[#fffdf9] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-amber-100 text-[11px] font-extrabold text-amber-700">
+                                        #{index + 1}
+                                      </span>
+                                      <p className="text-sm font-black text-[#3d200a]">{batchLabel(batch.type, batch.engine)}</p>
+                                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${sourceMeta.tone}`}>
+                                        {sourceMeta.label}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-sm font-semibold text-[#8a5d33]/80">
+                                      {batch.totalAssets} {batch.totalAssets === 1 ? "asset" : "assets"} • Queued {formatWhen(batch.createdAt)}
+                                    </p>
+                                    <p className="mt-0.5 text-xs font-semibold text-[#8a5d33]/65">
+                                      by {batch.initiatedBy?.name || batch.initiatedBy?.email || "Unknown"}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                                      Queued
+                                    </span>
+                                    {canScan && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void cancelBatch(batch.id)}
+                                        className="inline-flex items-center gap-2 rounded-full border border-red-200/80 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </section>
+                  )}
 
                   {shouldShowLiveScanPanel && liveScanBatch && (
                     <BatchSection batch={liveScanBatch} />

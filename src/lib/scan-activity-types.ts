@@ -119,6 +119,8 @@ export interface OrgScanActivityPayload {
   orgId: string;
   canScan: boolean;
   activeBatches: ScanActivityBatch[];
+  /** Batches with status 'queued' that are waiting behind the running batch */
+  queuedBatchCount: number;
   upcomingQueue: ScanUpcomingEntry[];
   latestCompletedBatch: ScanActivityBatch | null;
   latestBatch: ScanActivityBatch | null;

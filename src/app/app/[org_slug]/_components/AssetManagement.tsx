@@ -596,16 +596,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       return;
     }
 
-    if (activity?.activeBatches.length) {
-      toast.error(activity.lock.message || "Another scan is already running. Click to view.", {
-        position: "bottom-right",
-        action: {
-          label: "View",
-          onClick: () => openMonitor(),
-        },
-      });
-      return;
-    }
+
 
     setPortDiscoveryModal(scope);
     setIsLoadingPortDiscoveryConfig(true);
@@ -2276,10 +2267,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
         onClick={closePortDiscoveryModal}
       >
         <div
-          className="w-full max-w-[min(1120px,94vw)] overflow-hidden rounded-[1.1rem] border border-slate-200 bg-white shadow-[0_26px_70px_rgba(15,23,42,0.18)]"
+          className="w-full max-w-[min(1120px,94vw)] overflow-hidden rounded-[1.1rem] border border-amber-200/60 bg-[#fffdf9] shadow-[0_26px_70px_rgba(15,23,42,0.18)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
+          <div className="border-b border-amber-200/60 px-5 py-4 sm:px-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-extrabold text-[#3d200a]">Port &amp; IP Discovery</h3>
@@ -2292,7 +2283,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <button
                 type="button"
                 onClick={closePortDiscoveryModal}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-300/50 bg-[#fffdf9] text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#3d200a]"
                 aria-label="Close port discovery modal"
               >
                 <X className="h-4 w-4" />
@@ -2514,9 +2505,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       <dd className="font-bold text-[#3d200a]">{portDiscoveryEntryIssues.enabledCount}</dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="font-medium text-[#8a5d33]">Scan lock</dt>
-                      <dd className={`font-bold ${portDiscoveryLocked ? "text-red-600" : "text-emerald-600"}`}>
-                        {portDiscoveryLocked ? "Another scan is active" : "Ready to start"}
+                      <dt className="font-medium text-[#8a5d33]">Queue</dt>
+                      <dd className={`font-bold ${portDiscoveryLocked ? "text-amber-600" : "text-emerald-600"}`}>
+                        {portDiscoveryLocked ? "Will queue behind active scan" : "Ready — will start immediately"}
                       </dd>
                     </div>
                   </dl>
@@ -2537,7 +2528,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       hasInvalidPortDiscoveryBatchSize ||
                       hasInvalidPortDiscoveryTimeout
                     }
-                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-slate-300 bg-white text-sm font-bold text-[#3d200a] transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-[#fffdf9] text-sm font-bold text-[#3d200a] transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     {isSavingPortDiscoveryConfig ? (
                       <>
@@ -2556,7 +2547,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       isStartingPortDiscovery ||
                       isSavingPortDiscoveryConfig ||
                       isLoadingPortDiscoveryConfig ||
-                      portDiscoveryLocked ||
                       portDiscoveryEntryIssues.hasDuplicatePorts ||
                       portDiscoveryEntryIssues.hasInvalidPorts ||
                       portDiscoveryEntryIssues.hasEmptyTitles ||
@@ -2564,15 +2554,21 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       hasInvalidPortDiscoveryBatchSize ||
                       hasInvalidPortDiscoveryTimeout
                     }
-                    className="inline-flex h-11 w-full items-center justify-center rounded-full bg-[#1e3a8a] text-sm font-bold text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-45"
+                    className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-full text-sm font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                      portDiscoveryLocked
+                        ? "bg-amber-600 hover:bg-amber-700"
+                        : "bg-[#8B0000] hover:bg-[#6d0000]"
+                    }`}
                   >
                     {isStartingPortDiscovery ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Starting port discovery...
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {portDiscoveryLocked ? "Queuing..." : "Starting..."}
                       </>
+                    ) : portDiscoveryLocked ? (
+                      "Queue Now"
                     ) : (
-                      "Start Port Discovery"
+                      "Scan Now"
                     )}
                   </button>
                 </div>

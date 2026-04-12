@@ -931,16 +931,16 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                       <>
                         <button
                           onClick={() => void handleGroupScan()}
-                          disabled={orgScanLocked || isCreatingAnyBatch || selectedAssetIds.length < 2}
-                          data-tip="Scan Group"
+                          disabled={isCreatingAnyBatch || selectedAssetIds.length < 2}
+                          data-tip={orgScanLocked ? "Queue Group" : "Scan Group"}
                           className="action-tip inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#8B0000]/20 bg-white/80 text-[#8B0000] transition-all hover:bg-white disabled:opacity-50"
                         >
                           {isCreatingGroupScan ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
                         </button>
                         <button
                           onClick={() => void handleScanAll()}
-                          disabled={orgScanLocked || isCreatingAnyBatch}
-                          data-tip={isFullScanActive ? `Full Scan Running (${(fullScan?.completedAssets ?? 0) + (fullScan?.failedAssets ?? 0)}/${fullScan?.totalAssets ?? 0})` : "Scan All Assets"}
+                          disabled={isCreatingAnyBatch}
+                          data-tip={isFullScanActive ? `Full Scan Running (${(fullScan?.completedAssets ?? 0) + (fullScan?.failedAssets ?? 0)}/${fullScan?.totalAssets ?? 0})` : orgScanLocked ? "Queue All Assets" : "Scan All Assets"}
                           className="action-tip inline-flex h-9 w-9 items-center justify-center rounded-full bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] text-white transition-colors hover:from-[#9f0000] hover:to-[#7a0000] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {isFullScanActive || isCreatingFullScan ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
@@ -981,7 +981,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                   <div className="relative group">
                     <button
                       onClick={() => void handleGroupScan()}
-                      disabled={orgScanLocked || isCreatingAnyBatch || selectedAssetIds.length < 2}
+                      disabled={isCreatingAnyBatch || selectedAssetIds.length < 2}
                       className="inline-flex items-center gap-2 rounded-full border border-[#8B0000]/20 bg-white/80 px-5 py-2.5 text-sm font-bold text-[#8B0000] transition-all hover:bg-white disabled:opacity-50"
                     >
                       {isCreatingGroupScan ? (
@@ -992,8 +992,10 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                       {isCreatingGroupScan
                         ? "Starting Group Scan..."
                         : selectedAssetIds.length >= 2
-                          ? `Scan Group (${selectedAssetIds.length})`
-                          : "Scan Group"}
+                          ? orgScanLocked
+                            ? `Queue Group (${selectedAssetIds.length})`
+                            : `Scan Group (${selectedAssetIds.length})`
+                          : orgScanLocked ? "Queue Group" : "Scan Group"}
                     </button>
                     {selectedAssetIds.length < 2 && !isCreatingGroupScan && (
                       <span className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg border border-[#8B0000]/25 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#8B0000] shadow-md group-hover:inline-block">
@@ -1003,7 +1005,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                   </div>
                   <button
                     onClick={() => void handleScanAll()}
-                    disabled={orgScanLocked || isCreatingAnyBatch}
+                    disabled={isCreatingAnyBatch}
                     className="inline-flex items-center gap-2 rounded-full bg-linear-to-r from-[#8B0000] to-[rgb(110,0,0)] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:from-[#9f0000] hover:to-[#7a0000] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isFullScanActive || isCreatingFullScan ? (
@@ -1015,7 +1017,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                       ? "Starting Full Scan..."
                       : isFullScanActive
                       ? `Full Scan Running (${(fullScan?.completedAssets ?? 0) + (fullScan?.failedAssets ?? 0)}/${fullScan?.totalAssets ?? 0})`
-                      : "Scan All Assets"}
+                      : orgScanLocked ? "Queue All Assets" : "Scan All Assets"}
                   </button>
                   </>
                 )}
@@ -1287,7 +1289,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                           e.stopPropagation();
                           void handleScan(asset.id);
                         }}
-                        disabled={isQueued || isRunning || orgScanLocked || isCreatingAnyBatch}
+                        disabled={isQueued || isRunning || isCreatingAnyBatch}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#8B0000] bg-[#8B0000]/5 border border-[#8B0000]/15 rounded-lg hover:bg-[#8B0000]/10 transition-colors disabled:opacity-50"
                       >
                         {isQueued || isRunning || isCreatingAnyBatch ? (
@@ -1295,7 +1297,7 @@ export default function AssetScanning({ org, isAdmin, canScan }: AssetScanningPr
                         ) : (
                           <Zap className="w-3.5 h-3.5" />
                         )}
-                        {orgScanLocked && !isQueued && !isRunning ? "Locked" : isRunning ? "Scanning" : isQueued ? "Queued" : "Scan TLS"}
+                        {orgScanLocked && !isQueued && !isRunning ? "Queue" : isRunning ? "Scanning" : isQueued ? "Queued" : "Scan TLS"}
                       </button>
                     )}
                     <button className="p-1.5 text-[#8a5d33]/40 hover:text-[#8a5d33] transition-colors">

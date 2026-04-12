@@ -893,20 +893,6 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
 
     const createPromise = (async () => {
       try {
-      toast.loading("Checking for running scans...", { id: createToastId });
-
-      const activity = await refreshOrgActivity(input.orgId);
-      if (activity?.lock.active) {
-        toast.error("A scan is already running. Click to view.", {
-          id: createToastId,
-          action: {
-            label: "View",
-            onClick: () => setMonitorOrgId(input.orgId),
-          },
-        });
-        return { ok: false, error: activity.lock.message || "A scan is already running." };
-      }
-
       toast.loading(`Starting ${batchActionLabel(input.type, input.engine || "openssl")}...`, { id: createToastId });
 
       const controller = new AbortController();
@@ -923,7 +909,7 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         toast.error(
-          data?.error || "A scan is already running. Click to view.",
+          data?.error || "Failed to create scan batch.",
           {
             id: createToastId,
             action: data?.lockBatchId || data?.lockType ? {
@@ -945,9 +931,20 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
       }
 
       await ensureOrgStream(input.orgId, "batch-driven", data?.activity ?? null);
-      const startedLabel = `${batchActionLabel(input.type, input.engine || "openssl").replace(/^./, (c) => c.toUpperCase())} started.`;
-      if ((input.engine || "openssl") === "portDiscovery") {
-        toast.info(startedLabel, {
+
+      const wasQueued = data?.queued === true;
+      const actionLabel = batchActionLabel(input.type, input.engine || "openssl").replace(/^./, (c) => c.toUpperCase());
+      if (wasQueued) {
+        toast.info(`${actionLabel} queued.`, {
+          id: createToastId,
+          description: `Position #${(data?.queuePosition ?? 1)} in queue — will start after the current scan completes.`,
+          action: {
+            label: "View Queue",
+            onClick: () => setMonitorOrgId(input.orgId),
+          },
+        });
+      } else if ((input.engine || "openssl") === "portDiscovery") {
+        toast.info(`${actionLabel} started.`, {
           id: createToastId,
           position: "bottom-right",
           action: {
@@ -956,7 +953,7 @@ export function ScanActivityProvider({ children }: { children: ReactNode }) {
           },
         });
       } else {
-        toast.success(startedLabel, {
+        toast.success(`${actionLabel} started.`, {
           id: createToastId,
           action: {
             label: "View",
