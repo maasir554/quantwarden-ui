@@ -851,13 +851,25 @@ export default function ScanActivityMonitor({
     }
   };
 
-  // Fetch schedules when switching to the scheduled tab
+  // Fetch schedules on mount (for floating button badge) and when monitor opens
+  useEffect(() => {
+    void fetchSchedules();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (isMonitorOpen) {
+      void fetchSchedules();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMonitorOpen]);
+
   useEffect(() => {
     if (monitorPanel === "scheduled" && isMonitorOpen) {
       void fetchSchedules();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitorPanel, isMonitorOpen]);
+  }, [monitorPanel]);
 
 
   const latestBatch = activity?.latestBatch || null;
@@ -1209,9 +1221,15 @@ export default function ScanActivityMonitor({
               title="Open activity monitor"
             >
               <Maximize2 className="h-4 w-4" />
-              {queuedBatchCount > 0 && (
-                <span className="absolute -right-1 -top-1 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-extrabold text-white shadow-sm">
-                  {queuedBatchCount}
+              {(queuedBatchCount > 0 || activeScheduleCount > 0) && (
+                <span className={`absolute -right-1 -top-1 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-[9px] font-extrabold text-white shadow-sm ${
+                  queuedBatchCount > 0 && activeScheduleCount > 0
+                    ? "bg-gradient-to-r from-amber-500 to-blue-500"
+                    : activeScheduleCount > 0
+                      ? "bg-blue-500"
+                      : "bg-amber-500"
+                }`}>
+                  {queuedBatchCount + activeScheduleCount}
                 </span>
               )}
             </button>

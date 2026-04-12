@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getOrgScanAccess } from "@/lib/org-scan-permissions";
 import { createScanSchedule, listScanSchedulesForOrganization } from "@/lib/scan-schedule-server";
+import { notifyScanWorkerOfSchedule } from "@/lib/scan-worker-wake";
 
 export async function GET(req: NextRequest) {
   try {
@@ -73,6 +74,13 @@ export async function POST(req: NextRequest) {
       assetIds: Array.isArray(body?.assetIds) ? body.assetIds : [],
       configSnapshot: body?.configSnapshot,
       timezone: body?.timezone,
+    });
+
+    // Fire-and-forget: wake the worker so it processes the schedule immediately
+    void notifyScanWorkerOfSchedule({
+      orgId,
+      scheduleId: schedule.id,
+      nextRunAt: schedule.nextRunAt,
     });
 
     return NextResponse.json({ schedule }, { status: 201 });

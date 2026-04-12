@@ -76,3 +76,67 @@ export async function notifyScanWorkerOfManualBatch(payload: WakeWorkerPayload):
     clearTimeout(timeout);
   }
 }
+
+export async function notifyScanWorkerOfSchedule(payload: {
+  orgId: string;
+  scheduleId: string;
+  nextRunAt?: string | Date | null;
+}): Promise<WakeWorkerResult> {
+  const wakeUrl = process.env.SCAN_WORKER_WAKE_URL?.trim();
+  const wakeSecret = process.env.SCAN_WORKER_WAKE_SECRET?.trim();
+
+  if (!wakeUrl || !wakeSecret) {
+    return {
+      ok: false,
+      skipped: true,
+      error: "Worker wake endpoint is not configured.",
+    };
+  }
+
+  const timeoutMs = parseWakeTimeoutMs();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const runAtIso = payload.nextRunAt
+      ? typeof payload.nextRunAt === "string"
+        ? payload.nextRunAt
+        : payload.nextRunAt.toISOString()
+      : null;
+
+    const response = await fetch(wakeUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${wakeSecret}`,
+      },
+      body: JSON.stringify({
+        reason: "schedule_created",
+        orgId: payload.orgId,
+        nextRunAt: runAtIso,
+      }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        status: response.status,
+        error: errorText || `Worker wake request failed with status ${response.status}.`,
+      };
+    }
+
+    return { ok: true, status: response.status };
+  } catch (error: any) {
+    return {
+      ok: false,
+      error: error?.name === "AbortError"
+        ? `Worker wake request timed out after ${timeoutMs}ms.`
+        : error?.message || "Worker wake request failed.",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}

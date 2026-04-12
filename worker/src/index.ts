@@ -142,10 +142,24 @@ async function handleControlRequest(req: IncomingMessage, res: ServerResponse) {
         reason?: string;
         orgId?: string;
         batchId?: string;
+        nextRunAt?: string | null;
       };
 
       markWorkerActive(body.reason || "manual_wake", body.orgId);
       void runExecutorTickSafe();
+
+      const now = Date.now();
+      const runAtTime = body.nextRunAt ? new Date(body.nextRunAt).getTime() : now;
+
+      if (!Number.isNaN(runAtTime) && runAtTime > now) {
+        // Limit max timeout to ~24.8 days (Node.js limit), but our idle polling handles huge gaps anyway
+        const delayMs = Math.min(runAtTime - now, 2147483647);
+        setTimeout(() => {
+          void runSchedulerTickSafe();
+        }, delayMs);
+      } else {
+        void runSchedulerTickSafe();
+      }
 
       json(res, 200, {
         ok: true,
