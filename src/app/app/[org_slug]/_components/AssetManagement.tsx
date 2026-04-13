@@ -25,13 +25,16 @@ import {
   Telescope,
   CheckCircle2,
   TriangleAlert,
-  Eye,
-  EyeOff,
-  SlidersHorizontal,
-  ScanLine,
-  Calendar,
+  Tags,
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
+import {
+  buildAssetBucketOptions,
+  DEFAULT_ASSET_BUCKET,
+  inferAssetBucket,
+  normalizeAssetBucket,
+  PREDEFINED_ASSET_BUCKETS,
+} from "@/lib/asset-buckets";
 import {
   Select,
   SelectContent,
@@ -100,6 +103,34 @@ interface PortDiscoveryModalScope {
   mode: "full" | "single";
   assetIds: string[];
   assetLabel?: string | null;
+}
+
+interface ManagedRootAsset {
+  id: string;
+  value: string;
+  type: "domain" | "ip" | "unknown";
+  bucket: string;
+  addedAt: string;
+  scanning: boolean;
+  statusMessage?: string;
+  scanStatus?: string;
+  portDiscoveryStatus?: string;
+  resolvedIp?: string | null;
+  openPorts: AssetPort[];
+  subdomains: string[];
+}
+
+interface ManagedLeafAsset {
+  id: string;
+  value: string;
+  type: "domain" | "ip" | "unknown";
+  bucket: string;
+  parentId: string | null;
+  addedAt: string;
+  scanStatus?: string;
+  portDiscoveryStatus?: string;
+  resolvedIp?: string | null;
+  openPorts: AssetPort[];
 }
 
 // ═══════════════════════════════════════
@@ -277,6 +308,15 @@ function RenderResolvedIpChip({
   );
 }
 
+function AssetBucketChip({ bucket }: { bucket: string }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#8B0000]/8 px-2 py-0.5 text-[10px] font-bold text-[#8B0000]">
+      <Tags className="h-3 w-3" />
+      {bucket}
+    </span>
+  );
+}
+
 function toPortDiscoveryDrafts(entries: PortDiscoveryPresetEntry[]): PortDiscoveryEntryDraft[] {
   return entries.map((entry) => ({
     id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${entry.port}-${entry.title}`,
@@ -294,56 +334,43 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const orgAssets: any[] = org.assets || [];
   const portInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryCompletionToastRef = useRef<string | null>(null);
-  const opensslCompletionToastRef = useRef<string | null>(null);
-  const subdomainDiscoveryCompletionToastRef = useRef<string | null>(null);
-  // Seeded to true once activity first loads — prevents toasting for pre-existing completed batches
-  const completionRefsSeeded = useRef(false);
   const portDiscoveryListInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const portDiscoveryActivitySignatureRef = useRef<string | null>(null);
-  const subdomainDiscoveryActivitySignatureRef = useRef<string | null>(null);
   const {
     activity,
     createBatch,
     pendingBatchType,
     pendingBatchEngine,
     openMonitor,
-    refreshActivity,
   } = useScanActivity(org.id, {
     orgSlug: org.slug,
   });
 
   // === Root assets ===
-  const [rootAssets, setRootAssets] = useState<{
-    id: string; value: string; type: "domain" | "ip" | "unknown";
-    addedAt: string; scanning: boolean; statusMessage?: string; scanStatus?: string; portDiscoveryStatus?: string; resolvedIp?: string | null; openPorts: AssetPort[];
-    subdomains: string[];
-  }[]>(() => {
+  const [rootAssets, setRootAssets] = useState<ManagedRootAsset[]>(() => {
     return orgAssets.filter(a => a.isRoot).map(a => ({
       id: a.id,
       value: a.value,
       type: getAssetType(a.value),
+      bucket: normalizeAssetBucket(a.bucket || inferAssetBucket(a.value)),
       addedAt: new Date(a.createdAt).toISOString(),
-      // Never restore scanning state from DB — it can be stale.
-      // The workflow poller and manual SSE handler set scanning:true when needed.
-      scanning: false,
+      scanning: a.scanStatus === 'scanning',
       scanStatus: a.scanStatus,
       portDiscoveryStatus: a.portDiscoveryStatus,
       resolvedIp: a.resolvedIp ?? null,
       openPorts: parseOpenPorts(a.openPorts),
-      statusMessage: "",
+      statusMessage: a.scanStatus === 'scanning' ? "Scanning in background..." : "",
       subdomains: orgAssets.filter(leaf => leaf.parentId === a.id).map(l => l.value),
     }));
   });
 
   // === Leaf assets ===
-  const [leafAssets, setLeafAssets] = useState<{
-    id: string; value: string; type: "domain" | "ip" | "unknown";
-    parentId: string | null; addedAt: string; scanStatus?: string; portDiscoveryStatus?: string; resolvedIp?: string | null; openPorts: AssetPort[];
-  }[]>(() => {
+  const [leafAssets, setLeafAssets] = useState<ManagedLeafAsset[]>(() => {
     return orgAssets.filter(a => !a.isRoot).map(a => ({
       id: a.id,
       value: a.value,
       type: getAssetType(a.value),
+      bucket: normalizeAssetBucket(a.bucket || inferAssetBucket(a.value)),
       parentId: a.parentId,
       addedAt: new Date(a.createdAt).toISOString(),
       scanStatus: a.scanStatus,
@@ -366,7 +393,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [isSavingEditedPorts, setIsSavingEditedPorts] = useState(false);
   const [discoveredAssetsModal, setDiscoveredAssetsModal] = useState<{
     sourceValue: string;
-    assets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; openPorts: AssetPort[] }>;
+    assets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; bucket: string; openPorts: AssetPort[] }>;
   } | null>(null);
   const [portsPreviewAsset, setPortsPreviewAsset] = useState<{
     value: string;
@@ -381,26 +408,27 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [portDiscoveryProbeBatchSize, setPortDiscoveryProbeBatchSize] = useState(String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE));
   const [portDiscoveryProbeTimeoutMs, setPortDiscoveryProbeTimeoutMs] = useState(String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS));
   const [isLoadingPortDiscoveryConfig, setIsLoadingPortDiscoveryConfig] = useState(false);
-  const [isSavingPortDiscoveryConfig, setIsSavingPortDiscoveryConfig] = useState(false);
   const [isStartingPortDiscovery, setIsStartingPortDiscovery] = useState(false);
-  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
-  const [scheduleDate, setScheduleDate] = useState("");
-  const [scheduleTime, setScheduleTime] = useState("");
-  const [isSchedulingPortDiscovery, setIsSchedulingPortDiscovery] = useState(false);
 
-  // === Subdomain Discovery ===
-  const [isStartingSubdomainDiscovery, setIsStartingSubdomainDiscovery] = useState(false);
+  // === Discovery Queue ===
+  const [discoverQueue, setDiscoverQueue] = useState<string[]>([]);
 
   // === Search / View ===
   const [rootSearch, setRootSearch] = useState("");
   const [leafSearch, setLeafSearch] = useState("");
+  const [bucketFilter, setBucketFilter] = useState("all");
+  const [bucketView, setBucketView] = useState<"flat" | "grouped">("flat");
+  const [newBucketName, setNewBucketName] = useState("");
+  const [editingBucketAsset, setEditingBucketAsset] = useState<{
+    id: string;
+    value: string;
+    assetKind: "root" | "leaf";
+    bucket: string;
+  } | null>(null);
+  const [bucketDraft, setBucketDraft] = useState("");
+  const [isSavingBucket, setIsSavingBucket] = useState(false);
   const [rootOpen, setRootOpen] = useState(true);
   const [leafOpen, setLeafOpen] = useState(true);
-  // IDs of root assets whose children are shown in leaf section (empty = show all)
-  const [leafParentFilter, setLeafParentFilter] = useState<string[]>([]);
-  const [showLeafFilterModal, setShowLeafFilterModal] = useState(false);
-  // Temp selection inside the modal before Apply
-  const [leafFilterDraft, setLeafFilterDraft] = useState<string[]>([]);
   const hasDuplicatePortEntries = (() => {
     const seen = new Set<string>();
     for (const port of assetPorts) {
@@ -472,14 +500,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
         .map((item) => item.assetId)
     )
   );
-  const activeSubdomainDiscoveryBatches = (activity?.activeBatches || []).filter((batch) => batch.engine === "subdomainDiscovery");
-  const activeSubdomainDiscoveryAssetIds = new Set(
-    activeSubdomainDiscoveryBatches.flatMap((batch) =>
-      batch.items
-        .filter((item) => item.status === "pending" || item.status === "running")
-        .map((item) => item.assetId)
-    )
-  );
   const isCreatingPortDiscoveryBatch = pendingBatchEngine === "portDiscovery" && pendingBatchType !== null;
   const portDiscoveryLocked = Boolean(activity?.lock.active);
   const scannableAssets = [...rootAssets, ...leafAssets].filter(
@@ -495,10 +515,22 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const portDiscoveryScopeLabel = portDiscoveryModal?.mode === "single"
     ? portDiscoveryModal.assetLabel || "Selected asset"
     : `${portDiscoveryModal?.assetIds.length || 0} assets`;
+  const allManagedAssets = [...rootAssets, ...leafAssets];
+  const bucketOptions = buildAssetBucketOptions(allManagedAssets);
+  const visibleBucketOptions = bucketOptions.filter((bucket) =>
+    allManagedAssets.some((asset) => asset.bucket === bucket)
+  );
+  const selectedAddBucketLabel = bucketDraft === "__auto" ? "Auto bucket" : normalizeAssetBucket(bucketDraft);
+  const resolveAddBucket = (value: string) => {
+    if (newBucketName.trim()) return normalizeAssetBucket(newBucketName);
+    return bucketDraft === "__auto" ? inferAssetBucket(value) : normalizeAssetBucket(bucketDraft);
+  };
 
   const resetAssetModalState = () => {
     setRootInput("");
     setLeafInput("");
+    setBucketDraft("__auto");
+    setNewBucketName("");
     const defaultPorts = createDefaultAssetPorts();
     setAssetPorts(defaultPorts);
     setAssetPortDrafts(defaultPorts.map((port) => String(port.number)));
@@ -516,12 +548,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setPortDiscoveryProbeBatchSize(String(defaults.probeBatchSize));
     setPortDiscoveryProbeTimeoutMs(String(defaults.probeTimeoutMs));
     setIsLoadingPortDiscoveryConfig(false);
-    setIsSavingPortDiscoveryConfig(false);
     setIsStartingPortDiscovery(false);
-    setShowSchedulePicker(false);
-    setScheduleDate("");
-    setScheduleTime("");
-    setIsSchedulingPortDiscovery(false);
   }, []);
 
   const fetchAssets = useCallback(async () => {
@@ -539,15 +566,13 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
           return {
             ...asset,
-            // Keep scanning:true during an active in-memory scan (manual SSE or workflow poller),
-            // but never re-derive it from the DB scanStatus column — that value can be stale.
-            scanning: asset.scanning,
+            scanning: asset.scanning && fresh.scanStatus === "scanning",
             scanStatus: fresh.scanStatus,
             portDiscoveryStatus: fresh.portDiscoveryStatus,
             resolvedIp: fresh.resolvedIp ?? null,
             openPorts: parseOpenPorts(fresh.openPorts),
-            // statusMessage is managed by the SSE / workflow poller — keep in-memory value
-            statusMessage: asset.statusMessage,
+            bucket: normalizeAssetBucket(fresh.bucket || inferAssetBucket(fresh.value)),
+            statusMessage: asset.scanning && fresh.scanStatus !== "scanning" ? "" : asset.statusMessage,
             subdomains: Array.from(
               new Set([
                 ...asset.subdomains,
@@ -569,6 +594,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                 portDiscoveryStatus: fresh.portDiscoveryStatus,
                 resolvedIp: fresh.resolvedIp ?? null,
                 openPorts: parseOpenPorts(fresh.openPorts),
+                bucket: normalizeAssetBucket(fresh.bucket || inferAssetBucket(fresh.value)),
               }
             : asset;
         });
@@ -585,6 +611,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
             portDiscoveryStatus: asset.portDiscoveryStatus,
             resolvedIp: asset.resolvedIp ?? null,
             openPorts: parseOpenPorts(asset.openPorts),
+            bucket: normalizeAssetBucket(asset.bucket || inferAssetBucket(asset.value)),
           }));
 
         return newLeafs.length > 0 ? [...updatedLeafs, ...newLeafs] : updatedLeafs;
@@ -605,7 +632,16 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       return;
     }
 
-
+    if (activity?.activeBatches.length) {
+      toast.error(activity.lock.message || "Another scan is already running. Click to view.", {
+        position: "bottom-right",
+        action: {
+          label: "View",
+          onClick: () => openMonitor(),
+        },
+      });
+      return;
+    }
 
     setPortDiscoveryModal(scope);
     setIsLoadingPortDiscoveryConfig(true);
@@ -699,56 +735,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setPortDiscoveryEntries((current) => current.filter((entry) => entry.id !== id));
   };
 
-  const savePortDiscoveryConfig = async () => {
-    if (isSavingPortDiscoveryConfig || isStartingPortDiscovery) return;
-
-    if (
-      portDiscoveryEntryIssues.hasDuplicatePorts ||
-      portDiscoveryEntryIssues.hasInvalidPorts ||
-      portDiscoveryEntryIssues.hasEmptyTitles ||
-      portDiscoveryEntryIssues.enabledCount === 0 ||
-      hasInvalidPortDiscoveryBatchSize ||
-      hasInvalidPortDiscoveryTimeout
-    ) {
-      toast.error("Fix the port discovery settings before saving.", { position: "bottom-right" });
-      return;
-    }
-
-    const config = normalizePortDiscoveryConfig({
-      entries: portDiscoveryEntries.map((entry) => ({
-        port: Number(entry.portDraft),
-        title: entry.title,
-        enabled: entry.enabled,
-      })),
-      probeBatchSize: Number(portDiscoveryProbeBatchSize),
-      probeTimeoutMs: Number(portDiscoveryProbeTimeoutMs),
-    });
-
-    setIsSavingPortDiscoveryConfig(true);
-    try {
-      const res = await fetch("/api/orgs/port-discovery/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orgId: org.id,
-          entries: config.entries,
-          probeBatchSize: config.probeBatchSize,
-          probeTimeoutMs: config.probeTimeoutMs,
-        }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload?.error || "Failed to save port discovery settings.");
-      toast.success("Port discovery config saved.", { position: "bottom-right" });
-    } catch (error) {
-      toast.error("Could not save port discovery config.", {
-        description: error instanceof Error ? error.message : "Please try again.",
-        position: "bottom-right",
-      });
-    } finally {
-      setIsSavingPortDiscoveryConfig(false);
-    }
-  };
-
   const startPortDiscovery = async () => {
     if (!portDiscoveryModal || isStartingPortDiscovery) return;
 
@@ -818,69 +804,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     }
   };
 
-  const schedulePortDiscovery = async () => {
-    if (!portDiscoveryModal || isSchedulingPortDiscovery) return;
-    if (!portDiscoveryModal.assetIds?.length) {
-      toast.error("No assets to schedule.", { position: "bottom-right" });
-      return;
-    }
-    if (!scheduleDate || !scheduleTime) {
-      toast.error("Select a date and time to schedule the scan.", { position: "bottom-right" });
-      return;
-    }
-
-    const runAt = new Date(`${scheduleDate}T${scheduleTime}`);
-    if (Number.isNaN(runAt.getTime()) || runAt.getTime() <= Date.now()) {
-      toast.error("Schedule time must be in the future.", { position: "bottom-right" });
-      return;
-    }
-
-    const config = normalizePortDiscoveryConfig({
-      entries: portDiscoveryEntries.map((entry) => ({
-        port: Number(entry.portDraft),
-        title: entry.title,
-        enabled: entry.enabled,
-      })),
-      probeBatchSize: Number(portDiscoveryProbeBatchSize),
-      probeTimeoutMs: Number(portDiscoveryProbeTimeoutMs),
-    });
-
-    setIsSchedulingPortDiscovery(true);
-    try {
-      const res = await fetch("/api/orgs/scans/schedules", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orgId: org.id,
-          engine: "portDiscovery",
-          type: portDiscoveryModal.mode === "single" ? "single" : "full",
-          mode: "one_time",
-          runAt: runAt.toISOString(),
-          assetIds: portDiscoveryModal.assetIds,
-          configSnapshot: config,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to schedule port discovery.");
-      }
-      toast.success("Port discovery scheduled.", {
-        description: `Scheduled for ${runAt.toLocaleString()}`,
-        position: "bottom-right",
-        action: { label: "View Queue", onClick: () => openMonitor() },
-      });
-      closePortDiscoveryModal();
-    } catch (error) {
-      toast.error("Scheduling failed.", {
-        description: error instanceof Error ? error.message : "Please try again.",
-        position: "bottom-right",
-      });
-    } finally {
-      setIsSchedulingPortDiscovery(false);
-    }
-  };
-
   // === Handlers ===
   const addRootAssets = () => {
     const rawVal = rootInput;
@@ -895,12 +818,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       if (type === "unknown") return; // invalid input
       if (rootAssets.some((a) => a.value === val)) return; // duplicate
       if (newAssets.some((a) => a.value === val)) return; // duplicate in this batch
+      const bucket = resolveAddBucket(val);
       
       const assetId = `root-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       newAssets.push({
         id: assetId,
         value: val,
         type,
+        bucket,
         addedAt: new Date().toISOString(),
         scanning: false,
         scanStatus: "idle",
@@ -914,13 +839,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       fetch(`/api/orgs/assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgId: org.id, value: val, type, isRoot: true, openPorts: assetPorts })
+        body: JSON.stringify({ orgId: org.id, value: val, type, isRoot: true, openPorts: assetPorts, bucket })
       }).then(res => res.json()).then(data => {
          if(data.asset) {
-            setRootAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id } : a));
-            // Poll immediately and again after a short delay so the worker has time to queue the batch
-            void refreshActivity();
-            setTimeout(() => { void refreshActivity(); }, 3000);
+            setRootAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id, bucket: data.asset.bucket || bucket } : a));
          }
       }).catch(console.error);
     });
@@ -944,12 +866,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       if (type === "unknown") return;
       if (leafAssets.some((a) => a.value === val)) return;
       if (newAssets.some((a) => a.value === val)) return;
+      const bucket = resolveAddBucket(val);
       
       const assetId = `leaf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       newAssets.push({
         id: assetId,
         value: val,
         type,
+        bucket,
         parentId: null,
         addedAt: new Date().toISOString(),
         scanStatus: "idle",
@@ -962,13 +886,10 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       fetch(`/api/orgs/assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgId: org.id, value: val, type, isRoot: false, parentId: null, openPorts: assetPorts })
+        body: JSON.stringify({ orgId: org.id, value: val, type, isRoot: false, parentId: null, openPorts: assetPorts, bucket })
       }).then(res => res.json()).then(data => {
          if(data.asset) {
-            setLeafAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id } : a));
-            // Poll immediately and again after a short delay so the worker has time to queue the batch
-            void refreshActivity();
-            setTimeout(() => { void refreshActivity(); }, 3000);
+            setLeafAssets(prev => prev.map(a => a.id === assetId ? { ...a, id: data.asset.id, bucket: data.asset.bucket || bucket } : a));
          }
       }).catch(console.error);
     });
@@ -1191,6 +1112,85 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     }
   };
 
+  const openEditBucketModal = (asset: { id: string; value: string; bucket: string }, assetKind: "root" | "leaf") => {
+    setEditingBucketAsset({
+      id: asset.id,
+      value: asset.value,
+      bucket: normalizeAssetBucket(asset.bucket),
+      assetKind,
+    });
+    setBucketDraft(normalizeAssetBucket(asset.bucket));
+    setNewBucketName("");
+  };
+
+  const closeEditBucketModal = () => {
+    setEditingBucketAsset(null);
+    setBucketDraft("__auto");
+    setNewBucketName("");
+    setIsSavingBucket(false);
+  };
+
+  const resolveBucketDraft = () => {
+    if (newBucketName.trim()) return normalizeAssetBucket(newBucketName);
+    if (bucketDraft === "__auto" && editingBucketAsset) return inferAssetBucket(editingBucketAsset.value);
+    if (bucketDraft === "__auto") return DEFAULT_ASSET_BUCKET;
+    return normalizeAssetBucket(bucketDraft);
+  };
+
+  const saveEditedBucket = async () => {
+    if (!editingBucketAsset || isSavingBucket) return;
+
+    const nextBucket = resolveBucketDraft();
+    const targetAsset = editingBucketAsset;
+    const previousRootAssets = rootAssets;
+    const previousLeafAssets = leafAssets;
+    const previousDiscoveredAssetsModal = discoveredAssetsModal;
+
+    if (targetAsset.assetKind === "root") {
+      setRootAssets((current) => current.map((asset) => (asset.id === targetAsset.id ? { ...asset, bucket: nextBucket } : asset)));
+    } else {
+      setLeafAssets((current) => current.map((asset) => (asset.id === targetAsset.id ? { ...asset, bucket: nextBucket } : asset)));
+    }
+    setDiscoveredAssetsModal((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        assets: current.assets.map((asset) =>
+          asset.id === targetAsset.id ? { ...asset, bucket: nextBucket } : asset
+        ),
+      };
+    });
+
+    setIsSavingBucket(true);
+
+    try {
+      const response = await fetch(`/api/orgs/assets`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgId: org.id, id: targetAsset.id, bucket: nextBucket }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to save bucket.");
+      }
+
+      toast.success("Bucket saved.", {
+        description: `${targetAsset.value} moved to ${nextBucket}.`,
+        position: "bottom-right",
+      });
+      closeEditBucketModal();
+    } catch (error) {
+      setRootAssets(previousRootAssets);
+      setLeafAssets(previousLeafAssets);
+      setDiscoveredAssetsModal(previousDiscoveredAssetsModal);
+      toast.error("Could not save bucket.", {
+        description: error instanceof Error ? error.message : "Something went wrong while saving the bucket.",
+      });
+      setIsSavingBucket(false);
+    }
+  };
+
   const handleRemoveRoot = (id: string) => {
     setRootAssets(rootAssets.filter((a) => a.id !== id));
     setLeafAssets(leafAssets.filter((a) => a.parentId !== id));
@@ -1202,147 +1202,40 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     setLeafAssets(leafAssets.filter((a) => a.id !== id));
     fetch(`/api/orgs/assets?id=${id}&orgId=${org.id}`, { method: 'DELETE' }).catch(console.error);
   };
-  // === Automated workflow status poller ===
-  // Marks a root domain as "scanning" when the background worker is running
-  // subdomain_discovery for it, making the automated step visible in the domain row.
+
+  // === Queue Processor ===
   useEffect(() => {
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    let alive = true;
-    // Track which workflow IDs we've already acted on so we can detect transitions
-    const seenRunning = new Set<string>();
-    const seenDone = new Set<string>();
-
-    const poll = async () => {
-      if (!alive) return;
-      try {
-        const res = await fetch(`/api/orgs/workflow-status?orgId=${encodeURIComponent(org.id)}`, { cache: "no-store" });
-        if (!res.ok || !alive) return;
-        const json = await res.json() as {
-          workflows?: Array<{
-            id: string;
-            workflowType: string;
-            currentStep: string;
-            status: string;
-            triggerAssetId?: string;
-          }>;
-        };
-        const workflows = json.workflows || [];
-
-        // Which asset IDs are currently in subdomain_discovery running/pending
-        const activeDiscoveryAssetIds = new Set<string>();
-        for (const wf of workflows) {
-          if (
-            wf.currentStep === "subdomain_discovery" &&
-            (wf.status === "running" || wf.status === "pending") &&
-            wf.triggerAssetId
-          ) {
-            activeDiscoveryAssetIds.add(wf.triggerAssetId);
-            if (!seenRunning.has(wf.id)) {
-              seenRunning.add(wf.id);
-              // Mark the domain row as scanning
-              setRootAssets((prev) =>
-                prev.map((a) =>
-                  a.id === wf.triggerAssetId
-                    ? { ...a, scanning: true, statusMessage: "Discovering subdomains..." }
-                    : a
-                )
-              );
-            }
-          }
-
-          // Step moved past subdomain_discovery — clear indicator and refresh assets
-          if (
-            wf.workflowType === "onboarding" &&
-            wf.currentStep !== "subdomain_discovery" &&
-            wf.triggerAssetId &&
-            seenRunning.has(wf.id) &&
-            !seenDone.has(wf.id)
-          ) {
-            seenDone.add(wf.id);
-            // Clear the scanning state for this domain
-            setRootAssets((prev) =>
-              prev.map((a) =>
-                a.id === wf.triggerAssetId
-                  ? { ...a, scanning: false, statusMessage: "" }
-                  : a
-              )
-            );
-            // Refresh full asset list so newly discovered subdomains appear
-            void fetchAssets();
-          }
-        }
-
-        // Also clear any domains no longer in active discovery
-        if (seenRunning.size > 0) {
-          setRootAssets((prev) =>
-            prev.map((a) => {
-              if (a.scanning && a.statusMessage === "Discovering subdomains..." && !activeDiscoveryAssetIds.has(a.id)) {
-                return { ...a, scanning: false, statusMessage: "" };
-              }
-              return a;
-            })
-          );
-        }
-      } catch {
-        // non-critical — ignore errors
-      }
-    };
-
-    void poll();
-    pollTimer = setInterval(() => { void poll(); }, 5000);
-
-    return () => {
-      alive = false;
-      if (pollTimer !== null) clearInterval(pollTimer);
-    };
-  }, [org.id, fetchAssets]);
-
-  // === Subdomain Discovery Batch Dispatch ===
-  async function handleDiscoverSubdomains(assetIds: string[], type: "single" | "group" | "full", e?: React.MouseEvent) {
-    if (e) e.stopPropagation();
-    if (isStartingSubdomainDiscovery) return;
-    setIsStartingSubdomainDiscovery(true);
-    try {
-      const res = await fetch("/api/orgs/scans/batches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orgId: org.id, engine: "subdomainDiscovery", type, assetIds }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error("Subdomain discovery failed to start.", {
-          description: data?.error || "Please try again.",
-          position: "bottom-right",
-        });
-        return;
-      }
-      toast.info("Subdomain discovery queued.", {
-        description: type === "single"
-          ? `Discovering subdomains for ${rootAssets.find(a => a.id === assetIds[0])?.value ?? "the selected domain"}.`
-          : `Group subdomain discovery for ${assetIds.length} domains queued.`,
-        position: "bottom-right",
-      });
-      refreshActivity();
-    } catch (err: any) {
-      toast.error("Subdomain discovery failed to start.", {
-        description: err?.message || "Network error.",
-        position: "bottom-right",
-      });
-    } finally {
-      setIsStartingSubdomainDiscovery(false);
+    const activeCount = rootAssets.filter(a => a.scanning).length;
+    if (activeCount < 2 && discoverQueue.length > 0) {
+      const nextId = discoverQueue[0];
+      setDiscoverQueue(q => q.slice(1));
+      startDiscovery(nextId);
     }
-  }
+  }, [discoverQueue, rootAssets]);
+
+  const handleScanSubdomains = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (rootAssets.find(a => a.id === id)?.scanning) return;
+    const asset = rootAssets.find((a) => a.id === id);
+    setDiscoverQueue(q => q.includes(id) ? q : [...q, id]);
+    if (asset) {
+      toast.info("Subdomain discovery started.", {
+        description: `Scanning ${asset.value} for subdomains.`,
+        position: "bottom-right",
+      });
+    }
+  };
 
   const openDiscoveredAssetsModal = (
     sourceValue: string,
-    assets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; openPorts: AssetPort[] }>
+    assets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; bucket: string; openPorts: AssetPort[] }>
   ) => {
     setDiscoveredAssetsModal({ sourceValue, assets });
   };
 
   const showDiscoveryCompletionToast = (
     sourceValue: string,
-    discoveredAssets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; openPorts: AssetPort[] }>
+    discoveredAssets: Array<{ id: string; value: string; type: "domain" | "ip" | "unknown"; bucket: string; openPorts: AssetPort[] }>
   ) => {
     const discoveredCount = discoveredAssets.length;
     toast.custom(
@@ -1396,6 +1289,104 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     );
   };
 
+  const startDiscovery = (id: string) => {
+    setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: true, statusMessage: "Initializing stream..." } : a));
+    
+    const es = new EventSource(`/api/orgs/discover?assetId=${id}&orgId=${org.id}`);
+    
+    es.addEventListener("status", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: data.message } : a));
+      } catch(err){}
+    });
+
+    es.addEventListener("ping", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: data.message } : a));
+      } catch(err){}
+    });
+
+    es.addEventListener("done", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const asset = rootAssets.find((a) => a.id === id);
+        if (data.subdomains && data.subdomains.length > 0) {
+          const discoveredAssets = data.subdomains.map((subAsset: any) => ({
+            id: subAsset.id,
+            value: subAsset.value,
+            type: getAssetType(subAsset.value),
+            bucket: normalizeAssetBucket(subAsset.bucket || inferAssetBucket(subAsset.value)),
+            openPorts: parseOpenPorts(subAsset.openPorts),
+          }));
+          setLeafAssets(prev => {
+             const existing = new Set(prev.map(p => p.value));
+             const newLeafs = data.subdomains
+               .filter((s:any) => !existing.has(s.value))
+               .map((s: any) => ({
+                 ...s,
+                 type: getAssetType(s.value),
+                 bucket: normalizeAssetBucket(s.bucket || inferAssetBucket(s.value)),
+                 openPorts: parseOpenPorts(s.openPorts),
+               }));
+             return [...prev, ...newLeafs];
+          });
+          setRootAssets(prev => prev.map(a => a.id === id ? { 
+            ...a, 
+            scanning: false, 
+            statusMessage: "", 
+            subdomains: Array.from(new Set([...a.subdomains, ...data.subdomains.map((s:any)=>s.value)]))
+          } : a));
+          showDiscoveryCompletionToast(asset?.value || "Asset", discoveredAssets);
+        } else {
+          setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: "No subdomains found" } : a));
+          showDiscoveryCompletionToast(asset?.value || "Asset", []);
+          setTimeout(() => {
+            setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: "" } : a));
+          }, 5000);
+        }
+      } catch(err) {
+        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: "" } : a));
+      }
+      es.close();
+    });
+
+    es.addEventListener("error", (e) => {
+      let msg = "Connection error";
+      let code = "";
+      try { 
+        const d = JSON.parse((e as unknown as MessageEvent).data); 
+        if(d.message) msg = d.message; 
+        if (d.code) code = d.code;
+      } catch (err) {}
+      
+      setRootAssets(prev => prev.map(a => a.id === id ? { ...a, scanning: false, statusMessage: msg } : a));
+
+      const serviceDown =
+        code === "SUBFINDER_UNAVAILABLE" ||
+        /subfinder failed|fetch failed|connection refused|service unavailable|econnrefused|enotfound/i.test(msg);
+
+      if (serviceDown) {
+        toast.error("Subdomain discovery is unavailable.", {
+          description: "The Subfinder server appears to be down. Please contact support to turn on the Subfinder server.",
+          position: "bottom-right",
+        });
+      } else {
+        toast.error("Subdomain discovery failed.", {
+          description: msg,
+          position: "bottom-right",
+        });
+      }
+
+      setTimeout(() => {
+        setRootAssets(prev => prev.map(a => a.id === id ? { ...a, statusMessage: "" } : a));
+      }, 5000);
+      
+      es.close();
+    });
+  };
+
   // === Background Sync ===
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1415,18 +1406,21 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
   // === Filtered lists ===
   const filteredRoot = rootAssets.filter((a) =>
-    a.value.toLowerCase().includes(rootSearch.toLowerCase())
+    (bucketFilter === "all" || a.bucket === bucketFilter) &&
+    (a.value.toLowerCase().includes(rootSearch.toLowerCase()) ||
+      a.bucket.toLowerCase().includes(rootSearch.toLowerCase()))
   );
-  const filteredLeaf = leafAssets.filter((a) => {
-    const matchesSearch = a.value.toLowerCase().includes(leafSearch.toLowerCase());
-    const matchesParent =
-      leafParentFilter.length === 0 || leafParentFilter.includes(a.parentId ?? "");
-    return matchesSearch && matchesParent;
-  });
+  const filteredLeaf = leafAssets.filter((a) =>
+    (bucketFilter === "all" || a.bucket === bucketFilter) &&
+    (a.value.toLowerCase().includes(leafSearch.toLowerCase()) ||
+      a.bucket.toLowerCase().includes(leafSearch.toLowerCase()))
+  );
   const discoverableRootDomains = rootAssets.filter(
-    (asset) => asset.type === "domain"
+    (asset) => asset.type === "domain" && !asset.scanning && !discoverQueue.includes(asset.id)
   );
-  const bulkDiscoveryInProgress = isStartingSubdomainDiscovery;
+  const bulkDiscoveryInProgress = rootAssets.some(
+    (asset) => asset.type === "domain" && (asset.scanning || discoverQueue.includes(asset.id))
+  );
 
   useEffect(() => {
     const signature = activePortDiscoveryBatches
@@ -1443,34 +1437,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       void fetchAssets();
     }
   }, [activePortDiscoveryBatches, fetchAssets]);
-
-  // Refresh asset list in real-time as subdomain discovery batches progress
-  useEffect(() => {
-    const signature = activeSubdomainDiscoveryBatches
-      .map((batch) => `${batch.id}:${batch.status}:${batch.completedAssets}:${batch.failedAssets}`)
-      .join("|");
-
-    if (!signature) {
-      subdomainDiscoveryActivitySignatureRef.current = null;
-      return;
-    }
-
-    if (subdomainDiscoveryActivitySignatureRef.current !== signature) {
-      subdomainDiscoveryActivitySignatureRef.current = signature;
-      void fetchAssets();
-    }
-  }, [activeSubdomainDiscoveryBatches, fetchAssets]);
-
-  // Seed completion refs on first activity load so we don't toast for batches completed before the page opened.
-  // Declared before the toast effects so React runs it first (effects fire in declaration order).
-  useEffect(() => {
-    if (completionRefsSeeded.current || !activity) return;
-    completionRefsSeeded.current = true;
-    const batch = activity.latestCompletedBatch;
-    if (batch?.engine === "portDiscovery") portDiscoveryCompletionToastRef.current = batch.id;
-    if (batch?.engine === "openssl") opensslCompletionToastRef.current = batch.id;
-    if (batch?.engine === "subdomainDiscovery") subdomainDiscoveryCompletionToastRef.current = batch.id;
-  }, [activity]);
 
   useEffect(() => {
     const latestCompletedPortBatch =
@@ -1496,97 +1462,16 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     void fetchAssets();
   }, [activity?.latestCompletedBatch, fetchAssets]);
 
-  // OpenSSL scan completion toast
-  useEffect(() => {
-    const latestCompletedOpensslBatch =
-      activity?.latestCompletedBatch?.engine === "openssl" ? activity.latestCompletedBatch : null;
-
-    if (!latestCompletedOpensslBatch) return;
-    if (opensslCompletionToastRef.current === latestCompletedOpensslBatch.id) return;
-
-    opensslCompletionToastRef.current = latestCompletedOpensslBatch.id;
-
-    const isAutomated = latestCompletedOpensslBatch.source === "automated";
-
-    if (latestCompletedOpensslBatch.status === "completed") {
-      toast.success(
-        isAutomated ? "Automated SSL scan complete." : "SSL scan completed.",
-        {
-          description: `${latestCompletedOpensslBatch.completedAssets} asset${latestCompletedOpensslBatch.completedAssets !== 1 ? "s" : ""} scanned successfully.`,
-          position: "bottom-right",
-          action: isAutomated
-            ? { label: "View", onClick: () => openMonitor() }
-            : undefined,
-        }
-      );
-    } else if (latestCompletedOpensslBatch.status === "failed") {
-      toast.error("SSL scan finished with issues.", {
-        description: "Check the activity monitor for details.",
-        position: "bottom-right",
-        action: { label: "View", onClick: () => openMonitor() },
-      });
-    }
-
-    void fetchAssets();
-  }, [activity?.latestCompletedBatch, fetchAssets, openMonitor, org.id]);
-
-  // Subdomain discovery completion toast
-  useEffect(() => {
-    const latestCompletedSubdomainBatch =
-      activity?.latestCompletedBatch?.engine === "subdomainDiscovery" ? activity.latestCompletedBatch : null;
-
-    if (!latestCompletedSubdomainBatch) return;
-    if (subdomainDiscoveryCompletionToastRef.current === latestCompletedSubdomainBatch.id) return;
-
-    subdomainDiscoveryCompletionToastRef.current = latestCompletedSubdomainBatch.id;
-
-    const domainCount = latestCompletedSubdomainBatch.completedAssets;
-    const failedCount = latestCompletedSubdomainBatch.failedAssets;
-    const completedItems = latestCompletedSubdomainBatch.items.filter((item) => item.status === "completed");
-    const totalFound = completedItems.reduce((sum, item) => sum + (item.discoveredCount ?? 0), 0);
-    const totalNew = completedItems.reduce((sum, item) => sum + (item.newCount ?? 0), 0);
-
-    if (latestCompletedSubdomainBatch.status === "completed") {
-      const parts: string[] = [];
-      parts.push(`${domainCount} domain${domainCount !== 1 ? "s" : ""} scanned`);
-      if (totalFound > 0) {
-        parts.push(`${totalFound} subdomain${totalFound !== 1 ? "s" : ""} found`);
-        parts.push(`${totalNew} new`);
-      } else {
-        parts.push("no subdomains found");
-      }
-      toast.success("Subdomain discovery completed.", {
-        description: parts.join(" — ") + ".",
-        position: "bottom-right",
-      });
-    } else if (latestCompletedSubdomainBatch.status === "failed") {
-      toast.error("Subdomain discovery finished with issues.", {
-        description: failedCount > 0
-          ? `${failedCount} domain${failedCount !== 1 ? "s" : ""} failed. Check the activity monitor for details.`
-          : "Check the activity monitor for details.",
-        position: "bottom-right",
-        action: { label: "View", onClick: () => openMonitor() },
-      });
-    }
-
-    void fetchAssets();
-  }, [activity?.latestCompletedBatch, fetchAssets, openMonitor]);
   // === Render Asset Row (Root) ===
   const renderRootAssetRow = (asset: typeof rootAssets[0]) => {
     const Icon = getAssetIcon(asset.type);
     const isDnsExpired = asset.scanStatus === "expired" || asset.portDiscoveryStatus === "expired";
     const isPortDiscoveryRunning = activePortDiscoveryAssetIds.has(asset.id);
-    const isSubdomainDiscoveryRunning = activeSubdomainDiscoveryAssetIds.has(asset.id);
     return (
       <div
         key={asset.id}
-        className={`group relative flex items-center justify-between border-b border-dotted border-[#8B0000]/20 px-4 py-3 transition-colors hover:bg-[#8B0000]/[0.035] last:border-b-0 overflow-hidden ${
-          isSubdomainDiscoveryRunning ? "subdomain-discovery-row-active" : ""
-        }`}
+        className="group flex items-center justify-between border-b border-dotted border-[#8B0000]/20 px-4 py-3 transition-colors hover:bg-[#8B0000]/[0.035] last:border-b-0"
       >
-        {isSubdomainDiscoveryRunning && (
-          <div className="pointer-events-none absolute inset-0 subdomain-shimmer-bg" />
-        )}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
             asset.type === "domain" 
@@ -1598,6 +1483,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <p className={`truncate text-sm font-semibold ${isDnsExpired ? "text-red-600" : "text-[#3d200a]"}`}>{asset.value}</p>
+              <AssetBucketChip bucket={asset.bucket} />
               <RenderResolvedIpChip value={asset.value} type={asset.type} resolvedIp={asset.resolvedIp} />
               {isDnsExpired && (
                 <ActionTooltip content="The domain was not found in DNS.">
@@ -1622,11 +1508,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   {asset.statusMessage}
                 </span>
               )}
-              {!asset.statusMessage && isSubdomainDiscoveryRunning && (
-                <span className="text-[9px] font-bold text-[#8B0000] animate-pulse">
-                  Discovering subdomains...
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -1640,6 +1521,17 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <Telescope className="h-3.5 w-3.5" />
             </Link>
           </ActionTooltip>
+          {canManageAssets && (
+            <ActionTooltip content="Edit bucket">
+              <button
+                type="button"
+                onClick={() => openEditBucketModal(asset, "root")}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/15 bg-white text-[#8B0000] opacity-0 transition-all hover:bg-[#8B0000]/8 group-hover:opacity-100 focus-visible:opacity-100"
+              >
+                <Tags className="h-3.5 w-3.5" />
+              </button>
+            </ActionTooltip>
+          )}
           {canManageAssets && (
             <ActionTooltip content="Edit ports">
               <button
@@ -1664,45 +1556,20 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
           {asset.type === "domain" && canManageAssets && (
             <ActionTooltip content="Discover subdomains">
               <button
-                onClick={(e) => handleDiscoverSubdomains([asset.id], "single", e)}
-                disabled={isStartingSubdomainDiscovery}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/18 bg-white text-[#8B0000]/70 shadow-sm transition hover:bg-[#8B0000]/5 hover:text-[#8B0000] disabled:cursor-not-allowed disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                onClick={(e) => handleScanSubdomains(asset.id, e)}
+                disabled={asset.scanning || discoverQueue.includes(asset.id)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/20 bg-white text-[#8B0000] opacity-0 transition-all hover:bg-[#8B0000]/8 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50 cursor-pointer"
               >
-                {isStartingSubdomainDiscovery ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {asset.scanning || discoverQueue.includes(asset.id) ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
                 ) : (
-                  <ScanLine className="h-3.5 w-3.5" />
+                  <Network className="w-3.5 h-3.5" />
                 )}
               </button>
             </ActionTooltip>
           )}
 
-          {/* View subdomains — eye filter button */}
-          {asset.type === "domain" && asset.subdomains.length > 0 && (
-            <ActionTooltip content={leafParentFilter.includes(asset.id) ? "Clear subdomain filter" : "View subdomains"}>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLeafParentFilter((prev) =>
-                    prev.includes(asset.id)
-                      ? prev.filter((id) => id !== asset.id)
-                      : [...prev, asset.id]
-                  );
-                  setLeafOpen(true);
-                }}
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100 ${
-                  leafParentFilter.includes(asset.id)
-                    ? "border-violet-300/50 bg-violet-50 text-violet-600"
-                    : "border-amber-300/30 bg-white text-[#8a5d33] hover:bg-amber-50"
-                }`}
-              >
-                {leafParentFilter.includes(asset.id)
-                  ? <EyeOff className="h-3.5 w-3.5" />
-                  : <Eye className="h-3.5 w-3.5" />}
-              </button>
-            </ActionTooltip>
-          )}
+          {/* Remove */}
           {canManageAssets && (
             <button
               onClick={(e) => { e.stopPropagation(); handleRemoveRoot(asset.id); }}
@@ -1738,6 +1605,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <p className={`truncate text-sm font-semibold ${isDnsExpired ? "text-red-600" : "text-[#3d200a]"}`}>{asset.value}</p>
+              <AssetBucketChip bucket={asset.bucket} />
               <RenderResolvedIpChip value={asset.value} type={asset.type} resolvedIp={asset.resolvedIp} />
               {isDnsExpired && (
                 <ActionTooltip content="The domain was not found in DNS.">
@@ -1765,6 +1633,17 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <Telescope className="h-3.5 w-3.5" />
             </Link>
           </ActionTooltip>
+          {canManageAssets && (
+            <ActionTooltip content="Edit bucket">
+              <button
+                type="button"
+                onClick={() => openEditBucketModal(asset, "leaf")}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#8B0000]/15 bg-white text-[#8B0000] opacity-0 transition-all hover:bg-[#8B0000]/8 group-hover:opacity-100 focus-visible:opacity-100"
+              >
+                <Tags className="h-3.5 w-3.5" />
+              </button>
+            </ActionTooltip>
+          )}
           {canManageAssets && (
             <ActionTooltip content="Edit ports">
               <button
@@ -1810,6 +1689,33 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     );
   };
 
+  const renderGroupedAssets = <Asset extends { id: string; bucket: string }>(
+    assets: Asset[],
+    renderAssetRow: (asset: Asset) => React.ReactNode
+  ) => {
+    const grouped = assets.reduce<Record<string, Asset[]>>((groups, asset) => {
+      const bucket = normalizeAssetBucket(asset.bucket);
+      groups[bucket] = groups[bucket] || [];
+      groups[bucket].push(asset);
+      return groups;
+    }, {});
+
+    return Object.entries(grouped)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([bucket, bucketAssets]) => (
+        <div key={bucket} className="mb-4 overflow-hidden rounded-xl border border-amber-500/15 bg-white/70">
+          <div className="flex items-center justify-between border-b border-amber-500/10 bg-[#fff7ea] px-4 py-2">
+            <span className="inline-flex items-center gap-2 text-xs font-extrabold text-[#3d200a]">
+              <Tags className="h-3.5 w-3.5 text-[#8B0000]" />
+              {bucket}
+            </span>
+            <span className="text-[10px] font-bold text-[#8a5d33]/70">{bucketAssets.length} assets</span>
+          </div>
+          <div>{bucketAssets.map(renderAssetRow)}</div>
+        </div>
+      ));
+  };
+
   return (
     <TooltipProvider>
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-amber-300/40 bg-white/80 shadow-sm backdrop-blur-sm">
@@ -1842,6 +1748,25 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <CountBadge count={rootAssets.length + leafAssets.length} />
             </div>
             <div className="flex items-center gap-2">
+              <Select value={bucketFilter} onValueChange={setBucketFilter}>
+                <SelectTrigger className="h-10 min-w-[168px] rounded-full border border-amber-500/20 bg-white px-4 text-xs font-bold shadow-sm">
+                  <SelectValue placeholder="All buckets" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Buckets</SelectItem>
+                  {visibleBucketOptions.map((bucket) => (
+                    <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <button
+                type="button"
+                onClick={() => setBucketView((current) => (current === "flat" ? "grouped" : "flat"))}
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-amber-300/50 bg-white px-4 text-xs font-bold text-[#8B0000] shadow-sm transition-colors hover:bg-amber-50"
+              >
+                <Tags className="h-3.5 w-3.5" />
+                {bucketView === "flat" ? "Group Buckets" : "Flat List"}
+              </button>
               {canManageAssets && (
                 <ActionTooltip content="Add asset">
                   <button
@@ -1911,10 +1836,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     <button
                       type="button"
                       onClick={() => {
-                        const ids = discoverableRootDomains.map(a => a.id);
-                        void handleDiscoverSubdomains(ids, ids.length === 1 ? "single" : "group");
+                        discoverableRootDomains.forEach(a => handleScanSubdomains(a.id));
                       }}
-                      disabled={discoverableRootDomains.length === 0 || isStartingSubdomainDiscovery}
+                      disabled={discoverableRootDomains.length === 0 || bulkDiscoveryInProgress}
                       className="inline-flex whitespace-nowrap items-center justify-center gap-2 rounded-full bg-[#8B0000] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#730000] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {bulkDiscoveryInProgress ? (
@@ -1949,6 +1873,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     <span className="flex items-center gap-1.5">
                       <Clock className="h-3 w-3" />
                       {rootAssets.filter(a => a.scanning).length} Active
+                      {discoverQueue.length > 0 && <span className="text-[#8B0000]">{discoverQueue.length} Queued</span>}
                     </span>
                   </div>
                 )}
@@ -1961,7 +1886,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                       sub="Add domains or IP addresses to start mapping your attack surface."
                     />
                   ) : (
-                    filteredRoot.map(renderRootAssetRow)
+                    bucketView === "grouped"
+                      ? renderGroupedAssets(filteredRoot, renderRootAssetRow)
+                      : filteredRoot.map(renderRootAssetRow)
                   )}
                 </div>
               </div>
@@ -1987,42 +1914,17 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
 
               {leafOpen && (
                 <div
-                  className="relative flex items-center gap-2 w-full cursor-default sm:w-auto"
+                  className="relative w-full cursor-default sm:w-[260px]"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Parent filter badge */}
-                  <ActionTooltip content={leafParentFilter.length > 0 ? `Filtering by ${leafParentFilter.length} domain${leafParentFilter.length !== 1 ? "s" : ""}` : "Filter by parent domain"}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLeafFilterDraft(leafParentFilter);
-                        setShowLeafFilterModal(true);
-                      }}
-                      className={`relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all ${
-                        leafParentFilter.length > 0
-                          ? "border-violet-300/60 bg-violet-50 text-violet-600 hover:bg-violet-100"
-                          : "border-amber-400/20 bg-amber-50/60 text-[#8a5d33]/50 hover:bg-amber-100/60 hover:text-[#8a5d33]"
-                      }`}
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                      {leafParentFilter.length > 0 && (
-                        <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-violet-500 text-[8px] font-bold text-white">
-                          {leafParentFilter.length}
-                        </span>
-                      )}
-                    </button>
-                  </ActionTooltip>
-
-                  <div className="relative sm:w-[230px] w-full">
-                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a5d33]/30" />
-                    <input
-                      type="text"
-                      value={leafSearch}
-                      onChange={(e) => setLeafSearch(e.target.value)}
-                      placeholder="Search leaf assets..."
-                      className="w-full rounded-xl border border-amber-500/15 bg-amber-50/50 py-2 pl-9 pr-3 text-xs text-[#3d200a] placeholder:text-[#8a5d33]/30 transition-all focus:outline-none focus:ring-1 focus:ring-[#8B0000]/30"
-                    />
-                  </div>
+                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a5d33]/30" />
+                  <input
+                    type="text"
+                    value={leafSearch}
+                    onChange={(e) => setLeafSearch(e.target.value)}
+                    placeholder="Search leaf assets..."
+                    className="w-full rounded-xl border border-amber-500/15 bg-amber-50/50 py-2 pl-9 pr-3 text-xs text-[#3d200a] placeholder:text-[#8a5d33]/30 transition-all focus:outline-none focus:ring-1 focus:ring-[#8B0000]/30"
+                  />
                 </div>
               )}
             </div>
@@ -2036,11 +1938,13 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   {filteredLeaf.length === 0 ? (
                     <EmptyState
                       icon={Leaf}
-                      text={leafParentFilter.length > 0 ? "No subdomains found" : "No leaf assets"}
-                      sub={leafParentFilter.length > 0 ? "The selected domains have no recorded subdomains." : "Scan root domains for subdomains or add them manually."}
+                      text="No leaf assets"
+                      sub="Scan root domains for subdomains or add them manually."
                     />
                   ) : (
-                    filteredLeaf.map(renderLeafAssetRow)
+                    bucketView === "grouped"
+                      ? renderGroupedAssets(filteredLeaf, renderLeafAssetRow)
+                      : filteredLeaf.map(renderLeafAssetRow)
                   )}
                 </div>
               </div>
@@ -2050,131 +1954,6 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       </div>
 
     </section>
-
-    {/* ── Leaf parent filter modal ───────────────────────────── */}
-    {showLeafFilterModal && typeof document !== "undefined" && ReactDOM.createPortal((
-      <div
-        className="fixed inset-0 z-[130] flex items-end justify-center sm:items-center bg-black/30 backdrop-blur-sm p-4"
-        onClick={() => setShowLeafFilterModal(false)}
-      >
-        <div
-          className="w-full max-w-sm rounded-2xl border border-amber-300/25 bg-white shadow-2xl overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-amber-200/40 px-5 py-4">
-            <div>
-              <p className="text-sm font-bold text-[#3d200a]">Filter by parent domain</p>
-              <p className="text-[11px] text-[#8a5d33]/70 mt-0.5">
-                Select one or more root domains to show their subdomains.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowLeafFilterModal(false)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#8a5d33]/50 hover:bg-amber-50 hover:text-[#8a5d33] transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Domain list */}
-          <div className="max-h-72 overflow-y-auto px-3 py-2">
-            {rootAssets.filter((a) => a.type === "domain").length === 0 ? (
-              <p className="py-6 text-center text-xs text-[#8a5d33]/50">No root domains available.</p>
-            ) : (
-              <>
-                {/* Select all */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const allDomainIds = rootAssets.filter((a) => a.type === "domain").map((a) => a.id);
-                    const allSelected = allDomainIds.every((id) => leafFilterDraft.includes(id));
-                    setLeafFilterDraft(allSelected ? [] : allDomainIds);
-                  }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-amber-50/70"
-                >
-                  <div className={`h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
-                    rootAssets.filter((a) => a.type === "domain").every((a) => leafFilterDraft.includes(a.id))
-                      ? "border-violet-500 bg-violet-500"
-                      : rootAssets.filter((a) => a.type === "domain").some((a) => leafFilterDraft.includes(a.id))
-                        ? "border-violet-400 bg-violet-100"
-                        : "border-amber-300/50 bg-transparent"
-                  }`}>
-                    {rootAssets.filter((a) => a.type === "domain").every((a) => leafFilterDraft.includes(a.id)) && (
-                      <CheckCircle2 className="h-3 w-3 text-white" />
-                    )}
-                  </div>
-                  <span className="text-xs font-semibold text-[#3d200a]">Select all domains</span>
-                </button>
-
-                <div className="my-1.5 border-t border-amber-200/40" />
-
-                {rootAssets.filter((a) => a.type === "domain").map((asset) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() =>
-                      setLeafFilterDraft((prev) =>
-                        prev.includes(asset.id)
-                          ? prev.filter((id) => id !== asset.id)
-                          : [...prev, asset.id]
-                      )
-                    }
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-amber-50/70"
-                  >
-                    <div className={`h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
-                      leafFilterDraft.includes(asset.id)
-                        ? "border-violet-500 bg-violet-500"
-                        : "border-amber-300/50 bg-transparent"
-                    }`}>
-                      {leafFilterDraft.includes(asset.id) && (
-                        <CheckCircle2 className="h-3 w-3 text-white" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium text-[#3d200a]">{asset.value}</p>
-                      {asset.subdomains.length > 0 && (
-                        <p className="text-[10px] text-[#8a5d33]/60">
-                          {asset.subdomains.length} subdomain{asset.subdomains.length !== 1 ? "s" : ""}
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between gap-3 border-t border-amber-200/40 px-5 py-3">
-            <button
-              type="button"
-              onClick={() => {
-                setLeafFilterDraft([]);
-                setLeafParentFilter([]);
-                setShowLeafFilterModal(false);
-              }}
-              className="text-xs font-medium text-[#8a5d33]/70 hover:text-[#8a5d33] transition-colors"
-            >
-              Clear filter
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLeafParentFilter(leafFilterDraft);
-                if (leafFilterDraft.length > 0) setLeafOpen(true);
-                setShowLeafFilterModal(false);
-              }}
-              className="rounded-xl bg-[#8B0000] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#6d0000] disabled:opacity-50"
-            >
-              Apply{leafFilterDraft.length > 0 ? ` (${leafFilterDraft.length})` : ""}
-            </button>
-          </div>
-        </div>
-      </div>
-    ), document.body)}
-
     {canManageAssets && showAddModal && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
         className="fixed inset-0 z-[120] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
@@ -2229,6 +2008,51 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               }
               showSubmitButton={false}
             />
+            <div className="px-4 pb-2">
+              <div className="rounded-[1.25rem] border border-amber-500/15 bg-white/75 px-4 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="min-w-0 flex-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a5d33]/70">
+                      Bucket
+                    </span>
+                    <Select value={bucketDraft} onValueChange={(value) => {
+                      setBucketDraft(value);
+                      setNewBucketName("");
+                    }}>
+                      <SelectTrigger className="mt-2 h-10 rounded-full border border-amber-500/20 bg-white px-4 text-sm font-bold shadow-none">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto">Auto bucket from URL</SelectItem>
+                        {PREDEFINED_ASSET_BUCKETS.map((bucket) => (
+                          <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
+                        ))}
+                        {bucketOptions
+                          .filter((bucket) => !PREDEFINED_ASSET_BUCKETS.includes(bucket as any))
+                          .map((bucket) => (
+                            <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="min-w-0 flex-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a5d33]/70">
+                      Custom Bucket
+                    </span>
+                    <input
+                      type="text"
+                      value={newBucketName}
+                      onChange={(e) => setNewBucketName(e.target.value)}
+                      placeholder="e.g. YONO, UAT, CBS"
+                      className="mt-2 h-10 w-full rounded-full border border-amber-500/20 bg-white px-4 text-sm font-semibold text-[#3d200a] outline-none transition-all placeholder:text-[#8a5d33]/35 focus:ring-2 focus:ring-[#8B0000]/25"
+                    />
+                  </label>
+                </div>
+                <p className="mt-2 text-xs font-semibold text-[#8a5d33]/70">
+                  Selected: {newBucketName.trim() ? normalizeAssetBucket(newBucketName) : selectedAddBucketLabel}
+                </p>
+              </div>
+            </div>
             <div className="px-4 pb-2">
               <div className="rounded-[1.5rem] border border-amber-500/15 bg-white/75 px-4 py-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -2335,14 +2159,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     ), document.body)}
     {portDiscoveryModal && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
-        className="fixed inset-0 z-[128] flex items-start justify-center overflow-y-auto bg-black/35 p-3 backdrop-blur-sm sm:items-center sm:p-4"
+        className="fixed inset-0 z-[128] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
         onClick={closePortDiscoveryModal}
       >
         <div
-          className="my-auto flex max-h-[calc(100vh-1.5rem)] w-full max-w-[min(1120px,96vw)] flex-col overflow-hidden rounded-[2rem] border border-amber-300/35 bg-[linear-gradient(180deg,rgba(255,252,245,0.98)_0%,rgba(255,247,230,0.96)_100%)] shadow-[0_26px_70px_rgba(61,32,10,0.18)] sm:max-h-[calc(100vh-2rem)]"
+          className="w-full max-w-[min(1120px,94vw)] overflow-hidden rounded-[1.1rem] border border-slate-200 bg-white shadow-[0_26px_70px_rgba(15,23,42,0.18)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="border-b border-amber-300/35 bg-white/45 px-5 py-4 backdrop-blur-xl sm:px-6">
+          <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-extrabold text-[#3d200a]">Port &amp; IP Discovery</h3>
@@ -2355,7 +2179,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <button
                 type="button"
                 onClick={closePortDiscoveryModal}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-300/50 bg-[#fffdf9] text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#3d200a]"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
                 aria-label="Close port discovery modal"
               >
                 <X className="h-4 w-4" />
@@ -2371,9 +2195,8 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               </div>
             </div>
           ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 lg:overflow-hidden sm:px-6">
-              <div className="grid gap-5 lg:h-[calc(100vh-13rem)] lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.95fr)]">
-              <div className="min-h-0 lg:flex lg:h-full lg:flex-col">
+            <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.95fr)] sm:px-6">
+              <div className="min-h-0">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-extrabold text-[#3d200a]">Port list</h4>
@@ -2391,13 +2214,13 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   </button>
                 </div>
 
-                <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-3 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                  <div className="max-h-[min(28rem,calc(100vh-20rem))] overflow-y-auto pr-1 lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1">
+                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-3">
+                  <div className="max-h-[28rem] overflow-y-auto pr-1">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                       {portDiscoveryEntries.map((entry, index) => (
                         <div
                           key={entry.id}
-                          className="rounded-[1.25rem] border border-amber-200/60 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf0_100%)] p-3 shadow-[0_6px_18px_rgba(139,0,0,0.05)]"
+                          className="rounded-lg border border-slate-200 bg-white p-3 shadow-[0_1px_0_rgba(15,23,42,0.02)]"
                         >
                           <div className="flex items-start gap-3">
                             <input
@@ -2412,7 +2235,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   type="text"
                                   value={entry.title}
                                   onChange={(e) => updatePortDiscoveryEntry(entry.id, { title: e.target.value })}
-                                  className="h-10 min-w-0 flex-1 rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                                  className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
                                   placeholder="Service title"
                                 />
                                 <input
@@ -2420,7 +2243,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   inputMode="numeric"
                                   value={entry.portDraft}
                                   onChange={(e) => {
-                                    if (/^\d*$/.test(e.target.value)) {
+                                    if (/^\\d*$/.test(e.target.value)) {
                                       updatePortDiscoveryEntry(entry.id, { portDraft: e.target.value });
                                     }
                                   }}
@@ -2429,7 +2252,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   ref={(node) => {
                                     portDiscoveryListInputRefs.current[index] = node;
                                   }}
-                                  className="h-10 w-[92px] rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-bold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                                  className="h-10 w-[92px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
                                   placeholder="443"
                                 />
                               </div>
@@ -2470,253 +2293,234 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-col lg:h-full lg:overflow-hidden">
-                <div className="relative min-h-0 flex-1 overflow-hidden">
-                  <div className="max-h-[min(22rem,calc(100vh-26rem))] space-y-4 overflow-y-auto pr-1 lg:h-full lg:max-h-none lg:min-h-0 lg:[-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_18px,black_calc(100%-18px),transparent_100%)] lg:[mask-image:linear-gradient(to_bottom,transparent_0,black_18px,black_calc(100%-18px),transparent_100%)]">
-                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
-                      <h4 className="text-sm font-extrabold text-[#3d200a]">Probe settings</h4>
-                      <div className="mt-4 space-y-4">
-                        <label className="block">
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
-                            Probe batch size
-                          </span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={portDiscoveryProbeBatchSize}
-                            onChange={(e) => {
-                              if (/^\d*$/.test(e.target.value)) {
-                                setPortDiscoveryProbeBatchSize(e.target.value);
-                              }
-                            }}
-                            onFocus={(e) => e.currentTarget.select()}
-                            className="mt-2 h-10 w-full rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
-                            placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE)}
-                          />
-                          <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
-                            Default 5. Maximum 10.
-                          </span>
-                        </label>
+              <div className="flex min-h-0 flex-col gap-4">
+                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
+                  <h4 className="text-sm font-extrabold text-[#3d200a]">Probe settings</h4>
+                  <div className="mt-4 space-y-4">
+                    <label className="block">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
+                        Probe batch size
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={portDiscoveryProbeBatchSize}
+                        onChange={(e) => {
+                          if (/^\\d*$/.test(e.target.value)) {
+                            setPortDiscoveryProbeBatchSize(e.target.value);
+                          }
+                        }}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                        placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE)}
+                      />
+                      <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
+                        Default 5. Maximum 10.
+                      </span>
+                    </label>
 
-                        <label className="block">
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
-                            Probe timeout (ms)
-                          </span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={portDiscoveryProbeTimeoutMs}
-                            onChange={(e) => {
-                              if (/^\d*$/.test(e.target.value)) {
-                                setPortDiscoveryProbeTimeoutMs(e.target.value);
-                              }
-                            }}
-                            onFocus={(e) => e.currentTarget.select()}
-                            className="mt-2 h-10 w-full rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
-                            placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS)}
-                          />
-                          <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
-                            Default 600. Maximum 2000.
-                          </span>
-                        </label>
-                      </div>
+                    <label className="block">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
+                        Probe timeout (ms)
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={portDiscoveryProbeTimeoutMs}
+                        onChange={(e) => {
+                          if (/^\\d*$/.test(e.target.value)) {
+                            setPortDiscoveryProbeTimeoutMs(e.target.value);
+                          }
+                        }}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                        placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS)}
+                      />
+                      <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
+                        Default 600. Maximum 2000.
+                      </span>
+                    </label>
+                  </div>
 
-                      {(hasInvalidPortDiscoveryBatchSize || hasInvalidPortDiscoveryTimeout) && (
-                        <div className="mt-4 space-y-1 text-xs font-semibold text-red-600">
-                          {hasInvalidPortDiscoveryBatchSize && (
-                            <p>Probe batch size must be a number between 1 and 10.</p>
-                          )}
-                          {hasInvalidPortDiscoveryTimeout && (
-                            <p>Probe timeout must be a number between 1 and 2000 milliseconds.</p>
-                          )}
-                        </div>
+                  {(hasInvalidPortDiscoveryBatchSize || hasInvalidPortDiscoveryTimeout) && (
+                    <div className="mt-4 space-y-1 text-xs font-semibold text-red-600">
+                      {hasInvalidPortDiscoveryBatchSize && (
+                        <p>Probe batch size must be a number between 1 and 10.</p>
+                      )}
+                      {hasInvalidPortDiscoveryTimeout && (
+                        <p>Probe timeout must be a number between 1 and 2000 milliseconds.</p>
                       )}
                     </div>
-
-                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-extrabold text-[#3d200a]">Port ranges</h4>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-200 bg-white text-[#8a5d33]"
-                              aria-label="About port ranges"
-                            >
-                              <Info className="h-3 w-3" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>port ranges only available for verified domains.</TooltipContent>
-                        </Tooltip>
-                      </div>
-                      <div className="mt-3 rounded-[1.25rem] border border-dashed border-amber-200 bg-[#fffdf8] px-3 py-3">
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={false}
-                            disabled
-                            readOnly
-                            className="h-4 w-4 rounded border-amber-300 text-[#8a5d33]/40"
-                          />
-                          <div>
-                            <p className="text-sm font-semibold text-[#8a5d33]">Port ranges are disabled for now</p>
-                            <p className="mt-1 text-xs text-[#8a5d33]/70">Use the editable checklist above to control discovery.</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
-                      <h4 className="text-sm font-extrabold text-[#3d200a]">Run summary</h4>
-                      <dl className="mt-3 space-y-2 text-sm text-[#5b3a1f]">
-                        <div className="flex items-center justify-between gap-3">
-                          <dt className="font-medium text-[#8a5d33]">Scope</dt>
-                          <dd className="font-bold text-[#3d200a]">
-                            {portDiscoveryModal.mode === "single" ? portDiscoveryScopeLabel : `${portDiscoveryScopeLabel} selected`}
-                          </dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <dt className="font-medium text-[#8a5d33]">Enabled ports</dt>
-                          <dd className="font-bold text-[#3d200a]">{portDiscoveryEntryIssues.enabledCount}</dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <dt className="font-medium text-[#8a5d33]">Queue</dt>
-                          <dd className={`font-bold ${portDiscoveryLocked ? "text-amber-600" : "text-emerald-600"}`}>
-                            {portDiscoveryLocked ? "Will queue behind active scan" : "Ready — will start immediately"}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-                  </div>
-                  <div className="pointer-events-none absolute inset-x-0 top-0 hidden h-6 bg-[linear-gradient(180deg,rgba(255,248,237,0.98)_0%,rgba(255,248,237,0)_100%)] lg:block" />
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden h-6 bg-[linear-gradient(0deg,rgba(255,248,237,0.98)_0%,rgba(255,248,237,0)_100%)] lg:block" />
+                  )}
                 </div>
 
-                <div className="mt-4 flex shrink-0 flex-col gap-2 border-t border-amber-300/30 bg-[linear-gradient(180deg,rgba(255,252,245,0.96)_0%,rgba(255,247,230,0.98)_100%)] pt-4 lg:sticky lg:bottom-0">
-                  <button
-                    type="button"
-                    onClick={savePortDiscoveryConfig}
-                    disabled={
-                      isSavingPortDiscoveryConfig ||
-                      isStartingPortDiscovery ||
-                      isLoadingPortDiscoveryConfig ||
-                      portDiscoveryEntryIssues.hasDuplicatePorts ||
-                      portDiscoveryEntryIssues.hasInvalidPorts ||
-                      portDiscoveryEntryIssues.hasEmptyTitles ||
-                      portDiscoveryEntryIssues.enabledCount === 0 ||
-                      hasInvalidPortDiscoveryBatchSize ||
-                      hasInvalidPortDiscoveryTimeout
-                    }
-                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-[#fffdf9] text-sm font-bold text-[#3d200a] transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    {isSavingPortDiscoveryConfig ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save Config"
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={startPortDiscovery}
-                    disabled={
-                      isStartingPortDiscovery ||
-                      isSavingPortDiscoveryConfig ||
-                      isLoadingPortDiscoveryConfig ||
-                      isSchedulingPortDiscovery ||
-                      portDiscoveryEntryIssues.hasDuplicatePorts ||
-                      portDiscoveryEntryIssues.hasInvalidPorts ||
-                      portDiscoveryEntryIssues.hasEmptyTitles ||
-                      portDiscoveryEntryIssues.enabledCount === 0 ||
-                      hasInvalidPortDiscoveryBatchSize ||
-                      hasInvalidPortDiscoveryTimeout
-                    }
-                    className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-full text-sm font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                      portDiscoveryLocked
-                        ? "bg-amber-600 hover:bg-amber-700"
-                        : "bg-[#8B0000] hover:bg-[#6d0000]"
-                    }`}
-                  >
-                    {isStartingPortDiscovery ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {portDiscoveryLocked ? "Queuing..." : "Starting..."}
-                      </>
-                    ) : portDiscoveryLocked ? (
-                      "Queue Now"
-                    ) : (
-                      "Scan Now"
-                    )}
-                  </button>
-
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowSchedulePicker((v) => !v)}
-                      disabled={
-                        isStartingPortDiscovery ||
-                        isSchedulingPortDiscovery ||
-                        isLoadingPortDiscoveryConfig ||
-                        portDiscoveryEntryIssues.enabledCount === 0
-                      }
-                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-[#fffdf9] text-sm font-bold text-[#3d200a] transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                      Schedule for Later
-                    </button>
-
-                    {showSchedulePicker && (
-                      <div className="mt-2 rounded-[1.5rem] border border-amber-300/40 bg-[#fffdf8] p-4 shadow-sm ring-1 ring-amber-500/10">
-                        <p className="text-xs font-bold uppercase tracking-wide text-[#8a5d33]/70">Pick date &amp; time</p>
-                        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-                          <input
-                            type="date"
-                            value={scheduleDate}
-                            onChange={(e) => setScheduleDate(e.target.value)}
-                            min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
-                            className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-[#8B0000]/30 focus:ring-2 focus:ring-[#8B0000]/10"
-                          />
-                          <input
-                            type="time"
-                            value={scheduleTime}
-                            onChange={(e) => setScheduleTime(e.target.value)}
-                            className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-[#8B0000]/30 focus:ring-2 focus:ring-[#8B0000]/10"
-                          />
-                        </div>
+                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-extrabold text-[#3d200a]">Port ranges</h4>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
                         <button
                           type="button"
-                          onClick={schedulePortDiscovery}
-                          disabled={
-                            isSchedulingPortDiscovery ||
-                            !scheduleDate ||
-                            !scheduleTime ||
-                            portDiscoveryEntryIssues.enabledCount === 0
-                          }
-                          className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-[#3d200a] text-sm font-bold text-white transition-colors hover:bg-[#5b3a1f] disabled:cursor-not-allowed disabled:opacity-45"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500"
+                          aria-label="About port ranges"
                         >
-                          {isSchedulingPortDiscovery ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Scheduling...
-                            </>
-                          ) : (
-                            <>
-                              <Calendar className="h-3.5 w-3.5" />
-                              Schedule
-                            </>
-                          )}
+                          <Info className="h-3 w-3" />
                         </button>
+                      </TooltipTrigger>
+                      <TooltipContent>port ranges only available for verified domains.</TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        disabled
+                        readOnly
+                        className="h-4 w-4 rounded border-slate-300 text-slate-400"
+                      />
+                      <div>
+                        <p className="text-sm font-semibold text-slate-500">Port ranges are disabled for now</p>
+                        <p className="mt-1 text-xs text-slate-400">Use the editable checklist above to control discovery.</p>
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
-              </div>
+
+                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
+                  <h4 className="text-sm font-extrabold text-[#3d200a]">Run summary</h4>
+                  <dl className="mt-3 space-y-2 text-sm text-[#5b3a1f]">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="font-medium text-[#8a5d33]">Scope</dt>
+                      <dd className="font-bold text-[#3d200a]">
+                        {portDiscoveryModal.mode === "single" ? portDiscoveryScopeLabel : `${portDiscoveryScopeLabel} selected`}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="font-medium text-[#8a5d33]">Enabled ports</dt>
+                      <dd className="font-bold text-[#3d200a]">{portDiscoveryEntryIssues.enabledCount}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="font-medium text-[#8a5d33]">Scan lock</dt>
+                      <dd className={`font-bold ${portDiscoveryLocked ? "text-red-600" : "text-emerald-600"}`}>
+                        {portDiscoveryLocked ? "Another scan is active" : "Ready to start"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={startPortDiscovery}
+                  disabled={
+                    isStartingPortDiscovery ||
+                    isLoadingPortDiscoveryConfig ||
+                    portDiscoveryLocked ||
+                    portDiscoveryEntryIssues.hasDuplicatePorts ||
+                    portDiscoveryEntryIssues.hasInvalidPorts ||
+                    portDiscoveryEntryIssues.hasEmptyTitles ||
+                    portDiscoveryEntryIssues.enabledCount === 0 ||
+                    hasInvalidPortDiscoveryBatchSize ||
+                    hasInvalidPortDiscoveryTimeout
+                  }
+                  className="mt-auto inline-flex h-11 w-full items-center justify-center rounded-full bg-[#1e3a8a] text-sm font-bold text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {isStartingPortDiscovery ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Starting port discovery...
+                    </>
+                  ) : (
+                    "Start Port Discovery"
+                  )}
+                </button>
               </div>
             </div>
           )}
+        </div>
+      </div>
+    ), document.body)}
+    {canManageAssets && editingBucketAsset && typeof document !== "undefined" && ReactDOM.createPortal((
+      <div
+        className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+        onClick={closeEditBucketModal}
+      >
+        <div
+          className="w-full max-w-lg rounded-2xl border border-amber-300/40 bg-[#fffaf3] shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-amber-500/10 px-5 py-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-extrabold text-[#3d200a]">Edit Bucket</h3>
+                <p className="mt-1 break-all text-sm text-[#8a5d33]">{editingBucketAsset.value}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditBucketModal}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-300/40 bg-white text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#3d200a]"
+                aria-label="Close edit bucket modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4 px-5 py-5">
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a5d33]/70">
+                Bucket
+              </span>
+              <Select value={bucketDraft} onValueChange={(value) => {
+                setBucketDraft(value);
+                setNewBucketName("");
+              }}>
+                <SelectTrigger className="mt-2 h-11 rounded-full border border-amber-500/20 bg-white px-4 text-sm font-bold shadow-none">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__auto">Auto bucket from URL</SelectItem>
+                  {bucketOptions.map((bucket) => (
+                    <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a5d33]/70">
+                New Bucket
+              </span>
+              <input
+                type="text"
+                value={newBucketName}
+                onChange={(e) => setNewBucketName(e.target.value)}
+                placeholder="Create a bucket like Mobile Banking"
+                className="mt-2 h-11 w-full rounded-full border border-amber-500/20 bg-white px-4 text-sm font-semibold text-[#3d200a] outline-none transition-all placeholder:text-[#8a5d33]/35 focus:ring-2 focus:ring-[#8B0000]/25"
+              />
+            </label>
+
+            <div className="rounded-xl border border-[#8B0000]/10 bg-white px-4 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#8a5d33]/65">Will be moved to</p>
+              <p className="mt-1 text-sm font-extrabold text-[#3d200a]">{resolveBucketDraft()}</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={saveEditedBucket}
+              disabled={isSavingBucket}
+              className="inline-flex h-11 w-full items-center justify-center rounded-full bg-[#8B0000] text-sm font-bold text-white transition-colors hover:bg-[#730000] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSavingBucket ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving Bucket...
+                </>
+              ) : (
+                "Save Bucket"
+              )}
+            </button>
+          </div>
         </div>
       </div>
     ), document.body)}
@@ -2848,21 +2652,19 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     ), document.body)}
     {portsPreviewAsset && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
-        className="fixed inset-0 z-[125] flex items-center justify-center p-4 pointer-events-none"
+        className="fixed inset-0 z-[125] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
         onClick={() => setPortsPreviewAsset(null)}
       >
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm pointer-events-all" />
         <div
-          className="relative flex flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-white shadow-[0_24px_48px_rgba(139,0,0,0.15)] pointer-events-all"
+          className="w-[min(88vw,30rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-[0_24px_48px_rgba(15,23,42,0.12)]"
           onClick={(e) => e.stopPropagation()}
-          style={{ height: '70vh', maxWidth: '40rem' }}
         >
-          <div className="sticky top-0 z-10 border-b border-amber-500/20 bg-gradient-to-r from-amber-50 to-white px-5 py-4 flex-shrink-0">
+          <div className="border-b border-neutral-200 px-5 py-4">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-[#3d200a]">Open Ports for Asset</h3>
-                <p className="mt-1 text-sm font-semibold text-[#8a5d33]">{portsPreviewAsset.value}</p>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8a5d33]/70">
+                <p className="mt-1 text-sm font-semibold text-[#3d200a]">{portsPreviewAsset.value}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8a5d33]">
                   {portsPreviewAsset.type !== "ip" && portsPreviewAsset.resolvedIp ? (
                     <span>IP: {portsPreviewAsset.resolvedIp}</span>
                   ) : null}
@@ -2872,28 +2674,28 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <button
                 type="button"
                 onClick={() => setPortsPreviewAsset(null)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-500/30 bg-white text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#8B0000]"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-800"
                 aria-label="Close ports preview modal"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-5">
-            <div className="rounded-xl border border-amber-500/15 bg-amber-50/30">
+          <div className="px-5 py-4">
+            <div className="max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white">
               {portsPreviewAsset.openPorts.map((port, index) => (
                 <div
                   key={`${port.number}-${port.protocol}-${index}`}
-                  className="flex items-center justify-between border-b border-amber-500/10 px-4 py-3 last:border-b-0 hover:bg-amber-50/50 transition-colors"
+                  className="flex items-center justify-between border-b border-dotted border-neutral-200 px-4 py-3 last:border-b-0"
                 >
-                  <span className="text-sm font-bold text-[#3d200a]">
+                  <span className="text-sm font-semibold text-[#3d200a]">
                     Port {port.number}
                   </span>
                   <span
                     className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${
                       port.protocol === "udp"
-                        ? "bg-violet-100 text-violet-700"
-                        : "bg-emerald-100 text-emerald-700"
+                        ? "bg-violet-500/10 text-violet-700"
+                        : "bg-emerald-500/10 text-emerald-700"
                     }`}
                   >
                     {port.protocol.toUpperCase()}
@@ -2961,20 +2763,34 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                         </div>
                         <div className="min-w-0">
                           <p className="truncate text-[15px] font-semibold leading-6 text-[#3d200a]">{asset.value}</p>
-                          <div className="mt-1">{renderPortChips(asset.openPorts)}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <AssetBucketChip bucket={asset.bucket} />
+                            {renderPortChips(asset.openPorts)}
+                          </div>
                         </div>
                       </div>
-                      <ActionTooltip content="Edit ports">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            openEditPortsModal(asset, "leaf");
-                          }}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-600 transition-all hover:bg-neutral-50 hover:text-neutral-800"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                      </ActionTooltip>
+                      <div className="flex items-center gap-2">
+                        <ActionTooltip content="Edit bucket">
+                          <button
+                            type="button"
+                            onClick={() => openEditBucketModal(asset, "leaf")}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-[#8B0000] transition-all hover:bg-neutral-50"
+                          >
+                            <Tags className="h-4 w-4" />
+                          </button>
+                        </ActionTooltip>
+                        <ActionTooltip content="Edit ports">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              openEditPortsModal(asset, "leaf");
+                            }}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-600 transition-all hover:bg-neutral-50 hover:text-neutral-800"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </ActionTooltip>
+                      </div>
                     </div>
                   );
                 })
