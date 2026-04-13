@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   FileText,
   ScrollText,
+  Network,
 } from "lucide-react";
 import TeamManagement from "./TeamManagement";
 import AssetManagement from "./AssetManagement";
@@ -21,6 +22,7 @@ import type { DashboardSection } from "./dashboard-sections";
 import ScanActivityMonitor from "./ScanActivityMonitor";
 import OrgCbom from "./OrgCbom";
 import PqcPosture from "./PqcPosture";
+import AssetGraphViewer from "./AssetGraphViewer";
 
 interface OrgDashboardProps {
   org: any;
@@ -35,6 +37,7 @@ interface OrgDashboardProps {
 
 const navItems = [
   { id: "overview", label: "Security Overview", icon: Activity },
+  { id: "discoveries", label: "Discoveries", icon: Network },
   { id: "cbom", label: "CERT-IN CBOM", icon: ScrollText },
   { id: "pqc", label: "PQC Posture", icon: ShieldCheck },
   { id: "reporting", label: "Reporting", icon: FileText },
@@ -152,6 +155,11 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId, acti
             <OrgOverview
               org={org}
               isAdmin={isAdmin}
+            />
+          )}
+          {activeSection === "discoveries" && (
+            <AssetGraphViewer
+              org={org}
             />
           )}
           {activeSection === "cbom" && (
