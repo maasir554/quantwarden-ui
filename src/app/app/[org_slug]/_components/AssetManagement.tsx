@@ -2335,14 +2335,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     ), document.body)}
     {portDiscoveryModal && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
-        className="fixed inset-0 z-[128] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-[128] flex items-start justify-center overflow-y-auto bg-black/35 p-3 backdrop-blur-sm sm:items-center sm:p-4"
         onClick={closePortDiscoveryModal}
       >
         <div
-          className="w-full max-w-[min(1120px,94vw)] overflow-hidden rounded-[1.1rem] border border-amber-200/60 bg-[#fffdf9] shadow-[0_26px_70px_rgba(15,23,42,0.18)]"
+          className="my-auto flex max-h-[calc(100vh-1.5rem)] w-full max-w-[min(1120px,96vw)] flex-col overflow-hidden rounded-[2rem] border border-amber-300/35 bg-[linear-gradient(180deg,rgba(255,252,245,0.98)_0%,rgba(255,247,230,0.96)_100%)] shadow-[0_26px_70px_rgba(61,32,10,0.18)] sm:max-h-[calc(100vh-2rem)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="border-b border-amber-200/60 px-5 py-4 sm:px-6">
+          <div className="border-b border-amber-300/35 bg-white/45 px-5 py-4 backdrop-blur-xl sm:px-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-extrabold text-[#3d200a]">Port &amp; IP Discovery</h3>
@@ -2371,8 +2371,9 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               </div>
             </div>
           ) : (
-            <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.95fr)] sm:px-6">
-              <div className="min-h-0">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 lg:overflow-hidden sm:px-6">
+              <div className="grid gap-5 lg:h-[calc(100vh-13rem)] lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.95fr)]">
+              <div className="min-h-0 lg:flex lg:h-full lg:flex-col">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-extrabold text-[#3d200a]">Port list</h4>
@@ -2390,13 +2391,13 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                   </button>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-3">
-                  <div className="max-h-[28rem] overflow-y-auto pr-1">
+                <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-3 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+                  <div className="max-h-[min(28rem,calc(100vh-20rem))] overflow-y-auto pr-1 lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                       {portDiscoveryEntries.map((entry, index) => (
                         <div
                           key={entry.id}
-                          className="rounded-lg border border-slate-200 bg-white p-3 shadow-[0_1px_0_rgba(15,23,42,0.02)]"
+                          className="rounded-[1.25rem] border border-amber-200/60 bg-[linear-gradient(180deg,#ffffff_0%,#fffaf0_100%)] p-3 shadow-[0_6px_18px_rgba(139,0,0,0.05)]"
                         >
                           <div className="flex items-start gap-3">
                             <input
@@ -2411,7 +2412,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   type="text"
                                   value={entry.title}
                                   onChange={(e) => updatePortDiscoveryEntry(entry.id, { title: e.target.value })}
-                                  className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                                  className="h-10 min-w-0 flex-1 rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
                                   placeholder="Service title"
                                 />
                                 <input
@@ -2428,7 +2429,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                                   ref={(node) => {
                                     portDiscoveryListInputRefs.current[index] = node;
                                   }}
-                                  className="h-10 w-[92px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                                  className="h-10 w-[92px] rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-bold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
                                   placeholder="443"
                                 />
                               </div>
@@ -2469,123 +2470,129 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-col gap-4">
-                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
-                  <h4 className="text-sm font-extrabold text-[#3d200a]">Probe settings</h4>
-                  <div className="mt-4 space-y-4">
-                    <label className="block">
-                      <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
-                        Probe batch size
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={portDiscoveryProbeBatchSize}
-                        onChange={(e) => {
-                          if (/^\d*$/.test(e.target.value)) {
-                            setPortDiscoveryProbeBatchSize(e.target.value);
-                          }
-                        }}
-                        onFocus={(e) => e.currentTarget.select()}
-                        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
-                        placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE)}
-                      />
-                      <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
-                        Default 5. Maximum 10.
-                      </span>
-                    </label>
+              <div className="flex min-h-0 flex-col lg:h-full lg:overflow-hidden">
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                  <div className="max-h-[min(22rem,calc(100vh-26rem))] space-y-4 overflow-y-auto pr-1 lg:h-full lg:max-h-none lg:min-h-0 lg:[-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_18px,black_calc(100%-18px),transparent_100%)] lg:[mask-image:linear-gradient(to_bottom,transparent_0,black_18px,black_calc(100%-18px),transparent_100%)]">
+                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
+                      <h4 className="text-sm font-extrabold text-[#3d200a]">Probe settings</h4>
+                      <div className="mt-4 space-y-4">
+                        <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
+                            Probe batch size
+                          </span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={portDiscoveryProbeBatchSize}
+                            onChange={(e) => {
+                              if (/^\d*$/.test(e.target.value)) {
+                                setPortDiscoveryProbeBatchSize(e.target.value);
+                              }
+                            }}
+                            onFocus={(e) => e.currentTarget.select()}
+                            className="mt-2 h-10 w-full rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                            placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_BATCH_SIZE)}
+                          />
+                          <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
+                            Default 5. Maximum 10.
+                          </span>
+                        </label>
 
-                    <label className="block">
-                      <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
-                        Probe timeout (ms)
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={portDiscoveryProbeTimeoutMs}
-                        onChange={(e) => {
-                          if (/^\d*$/.test(e.target.value)) {
-                            setPortDiscoveryProbeTimeoutMs(e.target.value);
-                          }
-                        }}
-                        onFocus={(e) => e.currentTarget.select()}
-                        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
-                        placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS)}
-                      />
-                      <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
-                        Default 600. Maximum 2000.
-                      </span>
-                    </label>
-                  </div>
+                        <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#8a5d33]/65">
+                            Probe timeout (ms)
+                          </span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={portDiscoveryProbeTimeoutMs}
+                            onChange={(e) => {
+                              if (/^\d*$/.test(e.target.value)) {
+                                setPortDiscoveryProbeTimeoutMs(e.target.value);
+                              }
+                            }}
+                            onFocus={(e) => e.currentTarget.select()}
+                            className="mt-2 h-10 w-full rounded-xl border border-amber-200/70 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none transition-all focus:border-[#8B0000]/35 focus:ring-2 focus:ring-[#8B0000]/15"
+                            placeholder={String(DEFAULT_PORT_DISCOVERY_PROBE_TIMEOUT_MS)}
+                          />
+                          <span className="mt-1 block text-[11px] font-medium text-[#8a5d33]/70">
+                            Default 600. Maximum 2000.
+                          </span>
+                        </label>
+                      </div>
 
-                  {(hasInvalidPortDiscoveryBatchSize || hasInvalidPortDiscoveryTimeout) && (
-                    <div className="mt-4 space-y-1 text-xs font-semibold text-red-600">
-                      {hasInvalidPortDiscoveryBatchSize && (
-                        <p>Probe batch size must be a number between 1 and 10.</p>
-                      )}
-                      {hasInvalidPortDiscoveryTimeout && (
-                        <p>Probe timeout must be a number between 1 and 2000 milliseconds.</p>
+                      {(hasInvalidPortDiscoveryBatchSize || hasInvalidPortDiscoveryTimeout) && (
+                        <div className="mt-4 space-y-1 text-xs font-semibold text-red-600">
+                          {hasInvalidPortDiscoveryBatchSize && (
+                            <p>Probe batch size must be a number between 1 and 10.</p>
+                          )}
+                          {hasInvalidPortDiscoveryTimeout && (
+                            <p>Probe timeout must be a number between 1 and 2000 milliseconds.</p>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
 
-                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-extrabold text-[#3d200a]">Port ranges</h4>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500"
-                          aria-label="About port ranges"
-                        >
-                          <Info className="h-3 w-3" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>port ranges only available for verified domains.</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={false}
-                        disabled
-                        readOnly
-                        className="h-4 w-4 rounded border-slate-300 text-slate-400"
-                      />
-                      <div>
-                        <p className="text-sm font-semibold text-slate-500">Port ranges are disabled for now</p>
-                        <p className="mt-1 text-xs text-slate-400">Use the editable checklist above to control discovery.</p>
+                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-extrabold text-[#3d200a]">Port ranges</h4>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-200 bg-white text-[#8a5d33]"
+                              aria-label="About port ranges"
+                            >
+                              <Info className="h-3 w-3" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>port ranges only available for verified domains.</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <div className="mt-3 rounded-[1.25rem] border border-dashed border-amber-200 bg-[#fffdf8] px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={false}
+                            disabled
+                            readOnly
+                            className="h-4 w-4 rounded border-amber-300 text-[#8a5d33]/40"
+                          />
+                          <div>
+                            <p className="text-sm font-semibold text-[#8a5d33]">Port ranges are disabled for now</p>
+                            <p className="mt-1 text-xs text-[#8a5d33]/70">Use the editable checklist above to control discovery.</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
+
+                    <div className="rounded-[1.5rem] border border-amber-300/30 bg-white/70 p-4 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-sm">
+                      <h4 className="text-sm font-extrabold text-[#3d200a]">Run summary</h4>
+                      <dl className="mt-3 space-y-2 text-sm text-[#5b3a1f]">
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="font-medium text-[#8a5d33]">Scope</dt>
+                          <dd className="font-bold text-[#3d200a]">
+                            {portDiscoveryModal.mode === "single" ? portDiscoveryScopeLabel : `${portDiscoveryScopeLabel} selected`}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="font-medium text-[#8a5d33]">Enabled ports</dt>
+                          <dd className="font-bold text-[#3d200a]">{portDiscoveryEntryIssues.enabledCount}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="font-medium text-[#8a5d33]">Queue</dt>
+                          <dd className={`font-bold ${portDiscoveryLocked ? "text-amber-600" : "text-emerald-600"}`}>
+                            {portDiscoveryLocked ? "Will queue behind active scan" : "Ready — will start immediately"}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
                   </div>
+                  <div className="pointer-events-none absolute inset-x-0 top-0 hidden h-6 bg-[linear-gradient(180deg,rgba(255,248,237,0.98)_0%,rgba(255,248,237,0)_100%)] lg:block" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden h-6 bg-[linear-gradient(0deg,rgba(255,248,237,0.98)_0%,rgba(255,248,237,0)_100%)] lg:block" />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-[#fcfbf8] p-4">
-                  <h4 className="text-sm font-extrabold text-[#3d200a]">Run summary</h4>
-                  <dl className="mt-3 space-y-2 text-sm text-[#5b3a1f]">
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="font-medium text-[#8a5d33]">Scope</dt>
-                      <dd className="font-bold text-[#3d200a]">
-                        {portDiscoveryModal.mode === "single" ? portDiscoveryScopeLabel : `${portDiscoveryScopeLabel} selected`}
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="font-medium text-[#8a5d33]">Enabled ports</dt>
-                      <dd className="font-bold text-[#3d200a]">{portDiscoveryEntryIssues.enabledCount}</dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="font-medium text-[#8a5d33]">Queue</dt>
-                      <dd className={`font-bold ${portDiscoveryLocked ? "text-amber-600" : "text-emerald-600"}`}>
-                        {portDiscoveryLocked ? "Will queue behind active scan" : "Ready — will start immediately"}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-
-                <div className="mt-auto flex flex-col gap-2">
+                <div className="mt-4 flex shrink-0 flex-col gap-2 border-t border-amber-300/30 bg-[linear-gradient(180deg,rgba(255,252,245,0.96)_0%,rgba(255,247,230,0.98)_100%)] pt-4 lg:sticky lg:bottom-0">
                   <button
                     type="button"
                     onClick={savePortDiscoveryConfig}
@@ -2662,7 +2669,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     </button>
 
                     {showSchedulePicker && (
-                      <div className="mt-2 rounded-2xl border border-amber-200/80 bg-white p-4 shadow-md">
+                      <div className="mt-2 rounded-[1.5rem] border border-amber-300/40 bg-[#fffdf8] p-4 shadow-sm ring-1 ring-amber-500/10">
                         <p className="text-xs font-bold uppercase tracking-wide text-[#8a5d33]/70">Pick date &amp; time</p>
                         <div className="mt-2.5 grid grid-cols-2 gap-2.5">
                           <input
@@ -2670,13 +2677,13 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                             value={scheduleDate}
                             onChange={(e) => setScheduleDate(e.target.value)}
                             min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
-                            className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                            className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-[#8B0000]/30 focus:ring-2 focus:ring-[#8B0000]/10"
                           />
                           <input
                             type="time"
                             value={scheduleTime}
                             onChange={(e) => setScheduleTime(e.target.value)}
-                            className="h-10 w-full rounded-xl border border-amber-200 bg-[#fffdf9] px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/60"
+                            className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold text-[#3d200a] outline-none focus:border-[#8B0000]/30 focus:ring-2 focus:ring-[#8B0000]/10"
                           />
                         </div>
                         <button
@@ -2706,6 +2713,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                     )}
                   </div>
                 </div>
+              </div>
               </div>
             </div>
           )}
@@ -2840,19 +2848,21 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
     ), document.body)}
     {portsPreviewAsset && typeof document !== "undefined" && ReactDOM.createPortal((
       <div
-        className="fixed inset-0 z-[125] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-[125] flex items-center justify-center p-4 pointer-events-none"
         onClick={() => setPortsPreviewAsset(null)}
       >
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm pointer-events-all" />
         <div
-          className="w-[min(88vw,30rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-[0_24px_48px_rgba(15,23,42,0.12)]"
+          className="relative flex flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-white shadow-[0_24px_48px_rgba(139,0,0,0.15)] pointer-events-all"
           onClick={(e) => e.stopPropagation()}
+          style={{ height: '70vh', maxWidth: '40rem' }}
         >
-          <div className="border-b border-neutral-200 px-5 py-4">
+          <div className="sticky top-0 z-10 border-b border-amber-500/20 bg-gradient-to-r from-amber-50 to-white px-5 py-4 flex-shrink-0">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-[#3d200a]">Open Ports for Asset</h3>
-                <p className="mt-1 text-sm font-semibold text-[#3d200a]">{portsPreviewAsset.value}</p>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8a5d33]">
+                <p className="mt-1 text-sm font-semibold text-[#8a5d33]">{portsPreviewAsset.value}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8a5d33]/70">
                   {portsPreviewAsset.type !== "ip" && portsPreviewAsset.resolvedIp ? (
                     <span>IP: {portsPreviewAsset.resolvedIp}</span>
                   ) : null}
@@ -2862,28 +2872,28 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
               <button
                 type="button"
                 onClick={() => setPortsPreviewAsset(null)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-800"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-500/30 bg-white text-[#8a5d33] transition-colors hover:bg-amber-50 hover:text-[#8B0000]"
                 aria-label="Close ports preview modal"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           </div>
-          <div className="px-5 py-4">
-            <div className="max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white">
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="rounded-xl border border-amber-500/15 bg-amber-50/30">
               {portsPreviewAsset.openPorts.map((port, index) => (
                 <div
                   key={`${port.number}-${port.protocol}-${index}`}
-                  className="flex items-center justify-between border-b border-dotted border-neutral-200 px-4 py-3 last:border-b-0"
+                  className="flex items-center justify-between border-b border-amber-500/10 px-4 py-3 last:border-b-0 hover:bg-amber-50/50 transition-colors"
                 >
-                  <span className="text-sm font-semibold text-[#3d200a]">
+                  <span className="text-sm font-bold text-[#3d200a]">
                     Port {port.number}
                   </span>
                   <span
                     className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${
                       port.protocol === "udp"
-                        ? "bg-violet-500/10 text-violet-700"
-                        : "bg-emerald-500/10 text-emerald-700"
+                        ? "bg-violet-100 text-violet-700"
+                        : "bg-emerald-100 text-emerald-700"
                     }`}
                   >
                     {port.protocol.toUpperCase()}

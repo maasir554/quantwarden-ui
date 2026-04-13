@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useSession } from "@/lib/auth-client";
 import {
   Shield,
+  ShieldCheck,
   Users,
   ArrowLeft,
-  User,
+  FileText,
   ScrollText,
 } from "lucide-react";
 import TeamManagement from "./TeamManagement";
@@ -14,10 +15,12 @@ import AssetManagement from "./AssetManagement";
 import AssetScanning from "./AssetScanning";
 import OrgOverview from "./OrgOverview";
 import RoleManagement from "./RoleManagement";
+import OrgReporting from "./OrgReporting";
 import { Activity } from "lucide-react";
 import type { DashboardSection } from "./dashboard-sections";
 import ScanActivityMonitor from "./ScanActivityMonitor";
 import OrgCbom from "./OrgCbom";
+import PqcPosture from "./PqcPosture";
 
 interface OrgDashboardProps {
   org: any;
@@ -33,6 +36,8 @@ interface OrgDashboardProps {
 const navItems = [
   { id: "overview", label: "Security Overview", icon: Activity },
   { id: "cbom", label: "CERT-IN CBOM", icon: ScrollText },
+  { id: "pqc", label: "PQC Posture", icon: ShieldCheck },
+  { id: "reporting", label: "Reporting", icon: FileText },
   { id: "asset", label: "Asset Management", icon: Shield },
   { id: "scan", label: "Asset Scanning", icon: Shield },
   { id: "team", label: "Team Management", icon: Users },
@@ -152,6 +157,17 @@ export default function OrgDashboard({ org, currentUserRole, currentUserId, acti
           {activeSection === "cbom" && (
             <OrgCbom
               org={org}
+            />
+          )}
+          {activeSection === "pqc" && (
+            <PqcPosture
+              org={org}
+            />
+          )}
+          {activeSection === "reporting" && (
+            <OrgReporting
+              org={org}
+              canConfigure={isAdmin}
             />
           )}
           {activeSection === "team" && (

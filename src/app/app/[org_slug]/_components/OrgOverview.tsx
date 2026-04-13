@@ -690,25 +690,25 @@ function TopCertificateCommonNamesCard({
   const maxUniqueAssets = Math.max(...rows.map((row) => row.uniqueAssets), 1);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-[#8a5d33]/10 bg-white/55">
-      <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(220px,1fr)_minmax(220px,1fr)] border-b border-[#8a5d33]/10 bg-slate-100/80 text-[11px] font-bold uppercase tracking-[0.14em] text-[#8a5d33]/70">
-        <div className="px-4 py-3">Certificate name</div>
-        <div className="px-4 py-3">Instances</div>
-        <div className="px-4 py-3">Unique assets</div>
+    <div className="overflow-hidden rounded-2xl border border-amber-500/15 bg-white/55">
+      <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(200px,1fr)_minmax(200px,1fr)] border-b border-amber-500/10 bg-amber-50/50 text-[10px] font-black uppercase tracking-[0.15em] text-[#8a5d33]/60">
+        <div className="px-4 py-3">Certificate</div>
+        <div className="px-4 py-3 text-center">Instances</div>
+        <div className="px-4 py-3 text-center">Assets</div>
       </div>
 
-      <div className="divide-y divide-[#8a5d33]/8">
+      <div className="divide-y divide-amber-500/8">
         {rows.map((row) => (
           <div
             key={row.name}
-            className="grid grid-cols-[minmax(0,1.45fr)_minmax(220px,1fr)_minmax(220px,1fr)] items-center gap-0"
+            className="grid grid-cols-[minmax(0,1.5fr)_minmax(200px,1fr)_minmax(200px,1fr)] items-center gap-0"
           >
             <div className="px-4 py-3">
               <p className="truncate text-sm font-bold text-[#3d200a]" title={row.name}>
                 {row.name}
               </p>
               <p
-                className="mt-1 truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8a5d33]/65"
+                className="mt-1 truncate text-[9px] font-semibold uppercase tracking-[0.1em] text-[#8a5d33]/55"
                 title={`${row.issuerName} • ${row.serialNumber}`}
               >
                 {row.issuerName} • {row.serialNumber}
@@ -717,25 +717,25 @@ function TopCertificateCommonNamesCard({
 
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
-                <div className="h-10 flex-1 overflow-hidden rounded-md bg-blue-100/75">
+                <div className="h-6 flex-1 overflow-hidden bg-amber-100">
                   <div
-                    className="h-full bg-blue-500"
+                    className="h-full bg-gradient-to-r from-amber-500 to-amber-600"
                     style={{ width: `${(row.instances / maxInstances) * 100}%` }}
                   />
                 </div>
-                <span className="w-8 text-right text-sm font-bold text-[#3d200a]">{row.instances}</span>
+                <span className="w-8 text-right text-sm font-black text-[#3d200a]">{row.instances}</span>
               </div>
             </div>
 
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
-                <div className="h-10 flex-1 overflow-hidden rounded-md bg-slate-200/80">
+                <div className="h-6 flex-1 overflow-hidden bg-emerald-100">
                   <div
-                    className="h-full bg-slate-400"
+                    className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600"
                     style={{ width: `${(row.uniqueAssets / maxUniqueAssets) * 100}%` }}
                   />
                 </div>
-                <span className="w-8 text-right text-sm font-bold text-[#3d200a]">{row.uniqueAssets}</span>
+                <span className="w-8 text-right text-sm font-black text-[#3d200a]">{row.uniqueAssets}</span>
               </div>
             </div>
           </div>
@@ -920,9 +920,17 @@ export default function OrgOverview({ org, isAdmin }: OrgOverviewProps) {
         </article>
 
         <article className="flex h-full min-h-[14.5rem] flex-col rounded-3xl border border-amber-500/20 bg-white/60 p-6 shadow-sm backdrop-blur">
-          <div className="mb-2 flex items-center gap-2">
-            <Activity className="h-5 w-5 text-indigo-600" />
-            <h2 className="text-base font-bold text-[#3d200a]">Global SSL Posture</h2>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-indigo-600" />
+              <h2 className="text-base font-bold text-[#3d200a]">PQC Rating</h2>
+            </div>
+            <Link
+              href={`/app/${org.slug}/pqc`}
+              className="text-[10px] font-bold text-[#8B0000] hover:underline"
+            >
+              View Posture
+            </Link>
           </div>
           <div className={`mb-6 flex items-center justify-between rounded-2xl border px-6 py-5 ${data.tier.bg}`}>
             <div className="flex items-center gap-4">
@@ -933,6 +941,10 @@ export default function OrgOverview({ org, isAdmin }: OrgOverviewProps) {
                 <p className="text-sm font-bold tracking-tight text-[#3d200a]">{data.tier.tier}</p>
                 <p className={`text-base font-bold ${data.tier.color}`}>{data.tier.label}</p>
               </div>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-black text-[#3d200a]">{data.tier.score ?? 0}</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a5d33]/60">out of 100</p>
             </div>
           </div>
 
@@ -961,6 +973,19 @@ export default function OrgOverview({ org, isAdmin }: OrgOverviewProps) {
                 </UiTooltip>
               </div>
             </div>
+            {data.tier.portsScored > 0 && (
+              <div className="flex items-center justify-between rounded-xl border border-amber-500/10 bg-amber-500/5 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="h-4.5 w-4.5 text-emerald-600" />
+                  <p className="text-xs font-bold text-[#3d200a]">Ports Scored</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-emerald-600">
+                    {data.tier.portsScored}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
         </article>
@@ -1343,8 +1368,8 @@ export default function OrgOverview({ org, isAdmin }: OrgOverviewProps) {
             <Fingerprint className="h-5 w-5 text-sky-600" />
             <h2 className="text-base font-bold text-[#3d200a]">Top Certificates by Identity</h2>
           </div>
-          <p className="mb-5 text-[11px] font-bold uppercase tracking-widest text-[#8a5d33]/70">
-            Top 5 exact certificates grouped by serial number and issuer, shown by endpoint instances and unique assets
+          <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-[#8a5d33]/60">
+            Grouped by serial number and issuer
           </p>
           <TopCertificateCommonNamesCard rows={data.topCertificatesByIdentity || []} />
         </article>

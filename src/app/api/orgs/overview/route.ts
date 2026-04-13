@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 import { hasKyberGroup } from "@/lib/pqc";
+import { calculatePqcScore } from "@/lib/pqc-scoring";
 
 type OverviewScanRow = {
   assetId: string;
@@ -119,11 +120,7 @@ export async function GET(req: NextRequest) {
     }
 
     const latestEndpointScans = await prisma.$queryRawUnsafe<OverviewScanRow[]>(
-      `SELECT DISTINCT ON (
-          s."assetId",
-          COALESCE(s."portNumber", 443),
-          LOWER(COALESCE(s."portProtocol", 'tcp'))
-       )
+      `SELECT DISTINCT ON (s."assetId", s."portNumber")
           s."assetId" as "assetId",
           a.value as "assetName",
           s."completedAt" as "completedAt",
@@ -135,13 +132,8 @@ export async function GET(req: NextRequest) {
        INNER JOIN "asset" a ON a.id = s."assetId"
        WHERE a."organizationId" = $1
          AND s.type = 'openssl'
-         AND s.status IN ('completed', 'failed')
-       ORDER BY
-         s."assetId",
-         COALESCE(s."portNumber", 443),
-         LOWER(COALESCE(s."portProtocol", 'tcp')),
-         s."completedAt" DESC NULLS LAST,
-         s."createdAt" DESC`,
+         AND s.status = 'completed'
+       ORDER BY s."assetId", s."portNumber", s."createdAt" DESC`,
       orgId
     );
 
@@ -176,6 +168,9 @@ export async function GET(req: NextRequest) {
     let kyberNegotiatedYes = 0;
     let kyberNegotiatedNo = 0;
 
+    let pqcTotalScore = 0;
+    let pqcPortsScored = 0;
+
     const riskByAsset = new Map<string, RiskEntry>();
     const immediateAttentionByAsset = new Map<string, RiskEntry>();
     const dnsAttentionByAsset = new Map<string, RiskEntry>();
@@ -186,6 +181,15 @@ export async function GET(req: NextRequest) {
       const parsed = parseOpenSSLScanResult(row.resultData);
       const summary = parsed.summary;
       const portLabel = getPortLabel(row.portNumber, row.portProtocol);
+
+      // Calculate PQC score for all valid scans (matching PQC route)
+      if (parsed.raw) {
+        const pqcAssessment = calculatePqcScore(parsed.raw);
+        if (pqcAssessment) {
+          pqcTotalScore += pqcAssessment.score;
+          pqcPortsScored += 1;
+        }
+      }
 
       if (!summary) {
         if (parsed.error) {
@@ -411,47 +415,31 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const totalScanned = latestEndpointScans.length;
-    const failureRate =
-      totalScanned > 0
-        ? (expiredCerts + weakCipherCount + selfSignedCount + tlsDowngradeVulnerable) / (totalScanned * 4)
-        : 0;
+    const pqcAvgScore = pqcPortsScored > 0 ? Math.round(pqcTotalScore / pqcPortsScored) : 0;
 
-    let tier = {
-      grade: "A",
-      tier: "Tier 1",
-      label: "Excellent",
-      color: "text-emerald-500",
-      bg: "bg-emerald-500/10 border-emerald-500/20",
+    const totalScanned = latestEndpointScans.length;
+    
+    let pqcTier = "D";
+    if (pqcAvgScore >= 90) pqcTier = "A";
+    else if (pqcAvgScore >= 75) pqcTier = "B";
+    else if (pqcAvgScore >= 50) pqcTier = "C";
+
+    const tierLabel: Record<string, string> = {
+      A: "Quantum-Safe",
+      B: "Transitional",
+      C: "Legacy",
+      D: "Vulnerable",
     };
 
-    if (failureRate > 0) {
-      tier = {
-        grade: "B",
-        tier: "Tier 2",
-        label: "Good",
-        color: "text-blue-500",
-        bg: "bg-blue-500/10 border-blue-500/20",
-      };
-    }
-    if (failureRate > 0.1) {
-      tier = {
-        grade: "C",
-        tier: "Tier 3",
-        label: "Satisfactory",
-        color: "text-amber-500",
-        bg: "bg-amber-500/10 border-amber-500/20",
-      };
-    }
-    if (failureRate > 0.3) {
-      tier = {
-        grade: "D",
-        tier: "Tier 4",
-        label: "Needs Improvement",
-        color: "text-red-500",
-        bg: "bg-red-500/10 border-red-500/20",
-      };
-    }
+    let tier = {
+      grade: pqcTier,
+      tier: `Tier ${pqcTier}`,
+      label: tierLabel[pqcTier] || "Unknown",
+      color: pqcTier === "A" ? "text-emerald-500" : pqcTier === "B" ? "text-blue-500" : pqcTier === "C" ? "text-amber-500" : "text-red-500",
+      bg: pqcTier === "A" ? "bg-emerald-500/10 border-emerald-500/20" : pqcTier === "B" ? "bg-blue-500/10 border-blue-500/20" : pqcTier === "C" ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20",
+      score: pqcAvgScore,
+      portsScored: pqcPortsScored,
+    };
 
     const tlsChartData = Object.entries(tlsVersions)
       .map(([name, value]) => ({ name, value }))

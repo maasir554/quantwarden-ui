@@ -72,6 +72,8 @@ export default async function AssetExplorePage({
           initialTls={getFirstQueryValue(resolvedQuery.tls)}
           initialPqcSupported={getFirstQueryValue(resolvedQuery.pqcSupported)}
           initialPqcNegotiated={getFirstQueryValue(resolvedQuery.pqcNegotiated)}
+          initialPqcTier={getFirstQueryValue(resolvedQuery.pqcTier)}
+          initialScanStatus={getFirstQueryValue(resolvedQuery.scanStatus)}
           initialKexAlgorithms={getCsvQueryValues(resolvedQuery.kexAlgos)}
           initialKexGroups={getCsvQueryValues(resolvedQuery.kexGroups)}
           initialPage={getPositiveIntegerQueryValue(resolvedQuery.page, 1)}

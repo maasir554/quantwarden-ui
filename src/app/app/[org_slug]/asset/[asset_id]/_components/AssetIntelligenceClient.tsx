@@ -14,6 +14,7 @@ import {
   ChevronUp,
   Copy,
   Globe,
+  Info,
   KeyRound,
   Loader2,
   Lock,
@@ -23,10 +24,13 @@ import {
   ShieldCheck,
   Trash2,
   Zap,
+  X,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 import { deriveOpenSSLAssetRollup } from "@/lib/openssl-port-rollup";
+import { calculatePqcScore } from "@/lib/pqc-scoring";
+import { PqcMethodologyModal } from "../../../_components/PqcMethodologyModal";
 import { useScanActivity } from "@/components/scan-activity-provider";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -37,6 +41,7 @@ function SectionCard({
   scrollable = false,
   maxHeightClass,
   headerActions,
+  id,
 }: {
   title: string;
   icon: any;
@@ -44,6 +49,7 @@ function SectionCard({
   scrollable?: boolean;
   maxHeightClass?: string;
   headerActions?: ReactNode;
+  id?: string;
 }) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTopFade, setShowTopFade] = useState(false);
@@ -73,7 +79,7 @@ function SectionCard({
 
   if (scrollable) {
     return (
-      <section className={`flex min-h-0 flex-col overflow-hidden rounded-3xl border border-amber-500/15 bg-white/55 shadow-sm ring-1 ring-white/30 backdrop-blur-xl ${maxHeightClass || "h-[28rem]"}`}>
+      <section id={id} className={`flex min-h-0 flex-col overflow-hidden rounded-3xl border border-amber-500/15 bg-white/55 shadow-sm ring-1 ring-white/30 backdrop-blur-xl ${maxHeightClass || "h-[28rem]"}`}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/10 bg-[#fff6de] px-5 py-5">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8B0000]/10 text-[#8B0000]">
@@ -99,7 +105,7 @@ function SectionCard({
   }
 
   return (
-    <section className="rounded-3xl border border-amber-500/15 bg-white/55 p-5 shadow-sm ring-1 ring-white/30 backdrop-blur-xl">
+    <section id={id} className="rounded-3xl border border-amber-500/15 bg-white/55 p-5 shadow-sm ring-1 ring-white/30 backdrop-blur-xl">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#8B0000]/10 text-[#8B0000]">
@@ -397,6 +403,34 @@ function getProbeKeyExchangeValues(
   return [];
 }
 
+function PqcGauge({ score }: { score: number }) {
+  const pointerAngle = Math.max(-90, Math.min(90, -90 + (score / 100) * 180));
+
+  return (
+    <div className="flex flex-col items-center justify-center transform hover:scale-105 transition-transform duration-500">
+      <div className="relative w-48 h-28">
+        <svg className="w-full h-full overflow-visible drop-shadow-sm" viewBox="0 0 200 110">
+          <path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="#ef4444" strokeWidth="22" strokeLinecap="round" />
+          <path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="#ef4444" strokeWidth="22" />
+          <path d="M 100 20 A 80 80 0 0 1 156.56 43.43" fill="none" stroke="#f59e0b" strokeWidth="22" />
+          <path d="M 156.56 43.43 A 80 80 0 0 1 176.08 75.27" fill="none" stroke="#3b82f6" strokeWidth="22" />
+          <path d="M 176.08 75.27 A 80 80 0 0 1 180 100" fill="none" stroke="#10b981" strokeWidth="22" strokeLinecap="round" />
+          <path d="M 176.08 75.27 A 80 80 0 0 1 180 100" fill="none" stroke="#10b981" strokeWidth="22" />
+
+          <g transform={`translate(100, 100) rotate(${pointerAngle})`}>
+            <path d="M -4 0 L 0 -72 L 4 0 Z" fill="#3d200a" className="drop-shadow-md" />
+            <circle cx="0" cy="0" r="8" fill="#3d200a" />
+            <circle cx="0" cy="0" r="3" fill="#ffffff" />
+          </g>
+        </svg>
+      </div>
+      <div className="mt-3 flex flex-col items-center select-none">
+        <span className="text-[2.5rem] font-black leading-none text-[#3d200a] text-shadow-sm">{score}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function AssetIntelligenceClient({
   org,
   asset,
@@ -417,6 +451,8 @@ export default function AssetIntelligenceClient({
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [showPqcModal, setShowPqcModal] = useState(false);
+  const [activeRecommendation, setActiveRecommendation] = useState<"keyExchange" | "symmetric" | "protocol" | "auth" | null>(null);
   const [showQueriedGroups, setShowQueriedGroups] = useState(false);
   const [activeCertificateSection, setActiveCertificateSection] = useState<
     "subject" | "issuer" | "technical" | "identifiers" | "sans" | "chain" | null
@@ -467,6 +503,7 @@ export default function AssetIntelligenceClient({
   const parsed = useMemo(() => parseOpenSSLScanResult(displayScan?.resultData), [displayScan?.resultData]);
   const payload = parsed.raw;
   const summary = parsed.summary;
+  const pqcAssessment = useMemo(() => calculatePqcScore(payload), [payload]);
   const certificate = payload?.certificate || null;
   const certificateChain = useMemo(
     () =>
@@ -644,11 +681,11 @@ export default function AssetIntelligenceClient({
     <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col px-6 py-8 sm:px-8">
       <div className="mb-6">
         <Link
-          href={`/app/${org.slug}/asset`}
+          href={`/app/${org.slug}/explore`}
           className="inline-flex items-center gap-2 text-sm font-bold text-[#8a5d33]/60 transition-colors hover:text-[#8a5d33]"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to Asset Management
+          Back to Explorer
         </Link>
       </div>
 
@@ -670,6 +707,19 @@ export default function AssetIntelligenceClient({
                 <span className="rounded-full border border-white/60 bg-white/70 px-3 py-1 text-[10px] font-extrabold uppercase tracking-widest text-[#3d200a]">
                   {selectedPortTab.label}
                 </span>
+              )}
+              {pqcAssessment && (
+                <button
+                  onClick={() => document.getElementById('pqc-insights')?.scrollIntoView({ behavior: 'smooth' })}
+                  className={`rounded-full px-3 py-1 text-[10px] font-extrabold uppercase tracking-widest border transition-all hover:scale-105 ${
+                    pqcAssessment.tier === 'A' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' :
+                    pqcAssessment.tier === 'B' ? 'bg-blue-100 text-blue-700 border-blue-300' :
+                    pqcAssessment.tier === 'C' ? 'bg-amber-100 text-amber-700 border-amber-300' :
+                    'bg-red-100 text-red-700 border-red-300'
+                  }`}
+                >
+                  Tier {pqcAssessment.tier}
+                </button>
               )}
             </div>
 
@@ -1298,6 +1348,168 @@ export default function AssetIntelligenceClient({
               </div>
             </div>
           )}
+
+          {pqcAssessment && (
+            <SectionCard 
+              title="Post-Quantum Cryptography (PQC) Insights" 
+              icon={ShieldCheck}
+              id="pqc-insights"
+              headerActions={
+                <button
+                  onClick={() => setShowPqcModal(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-white/70 hover:bg-white rounded-lg text-xs font-bold text-[#8B0000] border border-amber-500/20 transition shadow-sm"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                  Methodology
+                </button>
+              }
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative">
+                <div className="col-span-1 flex flex-col items-center justify-center p-6 bg-linear-to-b from-[#fffcf2] to-[#fff1cc]/40 rounded-2xl border border-amber-500/20 shadow-sm relative overflow-hidden h-full min-h-[300px]">
+                  <div className="mb-4 text-center">
+                    <h3 className="text-xl font-black text-[#3d200a]">Tier {pqcAssessment.tier}</h3>
+                    <p className={`text-[10px] font-black uppercase tracking-widest mt-1 ${pqcAssessment.score >= 90 ? 'text-emerald-700' : pqcAssessment.score >= 75 ? 'text-blue-700' : pqcAssessment.score >= 50 ? 'text-amber-600' : 'text-red-700'}`}>
+                      {pqcAssessment.status}
+                    </p>
+                  </div>
+                  <PqcGauge score={pqcAssessment.score} />
+                </div>
+                
+                <div className="col-span-1 lg:col-span-2 flex flex-col gap-3">
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#8a5d33]/55 ml-1">Evaluation Breakdown</h3>
+                  
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-amber-500/10 bg-white/75">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${pqcAssessment.breakdown.keyExchange.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-700'}`}>1</span>
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-black text-[#3d200a]">Key Encapsulation</h4>
+                          <button onClick={() => setActiveRecommendation('keyExchange')} className="inline-flex w-5 h-5 items-center justify-center rounded-full text-[#8a5d33]/60 hover:bg-[#8a5d33]/15 hover:text-[#8a5d33] transition-colors"><Info className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs font-semibold text-[#8a5d33]/70 mt-1 ml-7">{pqcAssessment.breakdown.keyExchange.label}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-black text-[#8B0000]">{pqcAssessment.breakdown.keyExchange.score}</span>
+                      <span className="text-xs font-bold text-black/20">/{pqcAssessment.breakdown.keyExchange.max}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-amber-500/10 bg-white/75">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${pqcAssessment.breakdown.symmetric.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-700'}`}>2</span>
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-black text-[#3d200a]">Symmetric Encryption</h4>
+                          <button onClick={() => setActiveRecommendation('symmetric')} className="inline-flex w-5 h-5 items-center justify-center rounded-full text-[#8a5d33]/60 hover:bg-[#8a5d33]/15 hover:text-[#8a5d33] transition-colors"><Info className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs font-semibold text-[#8a5d33]/70 mt-1 ml-7">{pqcAssessment.breakdown.symmetric.label}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-black text-[#8B0000]">{pqcAssessment.breakdown.symmetric.score}</span>
+                      <span className="text-xs font-bold text-black/20">/{pqcAssessment.breakdown.symmetric.max}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-amber-500/10 bg-white/75">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${pqcAssessment.breakdown.protocol.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-700'}`}>3</span>
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-black text-[#3d200a]">Protocol Version</h4>
+                          <button onClick={() => setActiveRecommendation('protocol')} className="inline-flex w-5 h-5 items-center justify-center rounded-full text-[#8a5d33]/60 hover:bg-[#8a5d33]/15 hover:text-[#8a5d33] transition-colors"><Info className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs font-semibold text-[#8a5d33]/70 mt-1 ml-7">{pqcAssessment.breakdown.protocol.label}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-black text-[#8B0000]">{pqcAssessment.breakdown.protocol.score}</span>
+                      <span className="text-xs font-bold text-black/20">/{pqcAssessment.breakdown.protocol.max}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-amber-500/10 bg-white/75">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${pqcAssessment.breakdown.auth.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>4</span>
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-black text-[#3d200a]">Authentication</h4>
+                          <button onClick={() => setActiveRecommendation('auth')} className="inline-flex w-5 h-5 items-center justify-center rounded-full text-[#8a5d33]/60 hover:bg-[#8a5d33]/15 hover:text-[#8a5d33] transition-colors"><Info className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs font-semibold text-[#8a5d33]/70 mt-1 ml-7">{pqcAssessment.breakdown.auth.label}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-black text-[#8B0000]">{pqcAssessment.breakdown.auth.score}</span>
+                      <span className="text-xs font-bold text-black/20">/{pqcAssessment.breakdown.auth.max}</span>
+                    </div>
+                  </div>
+
+                  {pqcAssessment.breakdown.penalties.length > 0 && (
+                    <div className="mt-2 p-4 rounded-xl border border-red-200 bg-red-50">
+                       <h4 className="text-[10px] font-black uppercase tracking-widest text-[#8B0000]/60 mb-2">Hard Penalties Applied</h4>
+                       <div className="space-y-2">
+                         {pqcAssessment.breakdown.penalties.map((penalty, idx) => (
+                           <div key={idx} className="flex items-center justify-between py-1 border-b border-red-200/50 last:border-0">
+                             <p className="text-sm font-bold text-red-900">{penalty.reason}</p>
+                             <span className="text-sm font-black text-[#8B0000]">{penalty.score} pts</span>
+                           </div>
+                         ))}
+                       </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          <PqcMethodologyModal isOpen={showPqcModal} onClose={() => setShowPqcModal(false)} />
+
+          {activeRecommendation && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveRecommendation(null)} />
+              <div className="relative w-full max-w-lg bg-[#f2f8ff] shadow-[0_16px_60px_rgba(43,20,0,0.3)] rounded-[1.25rem] overflow-hidden border border-[#9cc5ff]/50 animation-in fade-in zoom-in-95 duration-200">
+                <div className="bg-[#8b0000] px-6 py-4 flex items-center justify-between">
+                  <h3 className="text-white font-black flex items-center gap-2 text-lg">
+                    <Info className="w-5 h-5 text-white/80" />
+                    Recommendation
+                  </h3>
+                  <button onClick={() => setActiveRecommendation(null)} className="text-white/60 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-1.5 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="p-6 bg-white/60">
+                  {activeRecommendation === 'keyExchange' && (
+                    <p className="text-[15px] text-gray-700 leading-relaxed font-medium">
+                      <strong className="text-gray-900 font-bold block mb-2 text-base">Upgrade Key Encapsulation</strong>
+                      To achieve maximum points, prioritize upgrading your web server or TLS terminator to natively support <strong>ML-KEM</strong> (formerly Kyber). For OpenSSL, this means upgrading to OpenSSL 3.0+ and configuring the `oqs-provider`. For Nginx or HAProxy, ensure quantum-safe groups like `X25519Kyber768Draft00` are enabled and prioritized in your configuration directives.
+                    </p>
+                  )}
+                  {activeRecommendation === 'symmetric' && (
+                    <p className="text-[15px] text-gray-700 leading-relaxed font-medium">
+                      <strong className="text-gray-900 font-bold block mb-2 text-base">Strengthen Symmetric Encryption</strong>
+                      Grover's algorithm effectively halves the strength of symmetric cipher keys, making 128-bit vulnerable to future quantum attacks. Ensure your TLS configuration prefers ciphers using <strong>AES-256-GCM</strong> or <strong>ChaCha20-Poly1305</strong>. De-prioritize or completely disable 128-bit keys and legacy modes such as CBC.
+                    </p>
+                  )}
+                  {activeRecommendation === 'protocol' && (
+                    <p className="text-[15px] text-gray-700 leading-relaxed font-medium">
+                      <strong className="text-gray-900 font-bold block mb-2 text-base">Enforce Modern Protocols</strong>
+                      Force <strong>TLS 1.3</strong> as the default and minimum protocol version. Post-Quantum algorithms integrate most effectively into the TLS 1.3 handshake mechanism. Only permit TLS 1.2 if strict backward compatibility for legacy clients is absolutely required, and explicitly disable TLS 1.0 and TLS 1.1 across all environments.
+                    </p>
+                  )}
+                  {activeRecommendation === 'auth' && (
+                    <p className="text-[15px] text-gray-700 leading-relaxed font-medium">
+                      <strong className="text-gray-900 font-bold block mb-2 text-base">Migrate Authentication Signatures</strong>
+                      Standardized PQC signature algorithms (like ML-DSA) are rapidly emerging. As an interim measure before full infrastructure migration, ensure you are utilizing at least <strong>ECDSA (P-384+)</strong>, <strong>EdDSA (Ed448)</strong>, or classic <strong>RSA with key sizes ≥ 3072 bits</strong>. Avoid issuing new certificates with RSA-2048 or SHA-1 variants.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
     </div>

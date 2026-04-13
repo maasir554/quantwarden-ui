@@ -16,6 +16,7 @@ export type CbomAlgorithmRow = {
   classicalSecurityLevel: string;
   oid: string;
   list: string;
+  assets: string[];
 };
 
 export type CbomKeyRow = {
@@ -80,8 +81,9 @@ export type CbomScanSource = {
   resultData: string | null;
 };
 
-type AlgorithmAggregate = Omit<CbomAlgorithmRow, "list"> & {
+type AlgorithmAggregate = Omit<CbomAlgorithmRow, "list" | "assets"> & {
   contexts: Set<string>;
+  assets: Set<string>;
 };
 
 const TLS_VERSION_ORDER: Record<string, number> = {
@@ -294,6 +296,7 @@ function buildAlgorithmRows(scans: CbomScanSource[]) {
     name: string | null | undefined,
     raw: OpenSSLProfileResponse | null,
     endpointReference: string,
+    assetName: string,
     explicitOid?: string | null
   ) => {
     if (!name || !name.trim()) return;
@@ -309,6 +312,7 @@ function buildAlgorithmRows(scans: CbomScanSource[]) {
       existing.oid = preferReported(existing.oid, oid);
       existing.classicalSecurityLevel = preferReported(existing.classicalSecurityLevel, inferSecurityLevel(algorithmName));
       existing.contexts.add(endpointReference);
+      existing.assets.add(assetName);
       return;
     }
 
@@ -322,6 +326,7 @@ function buildAlgorithmRows(scans: CbomScanSource[]) {
       classicalSecurityLevel: inferSecurityLevel(algorithmName),
       oid,
       contexts: new Set([endpointReference]),
+      assets: new Set([assetName]),
     });
   };
 
@@ -333,31 +338,31 @@ function buildAlgorithmRows(scans: CbomScanSource[]) {
     const raw = parsed.raw;
     const certificate = raw.certificate || {};
 
-    recordAlgorithm(certificate.signature_algorithm?.name, raw, endpointReference, certificate.signature_algorithm?.oid || null);
-    recordAlgorithm(certificate.public_key_algorithm?.name, raw, endpointReference, certificate.public_key_algorithm?.oid || null);
+    recordAlgorithm(certificate.signature_algorithm?.name, raw, endpointReference, row.assetName, certificate.signature_algorithm?.oid || null);
+    recordAlgorithm(certificate.public_key_algorithm?.name, raw, endpointReference, row.assetName, certificate.public_key_algorithm?.oid || null);
 
     for (const signatureAlgorithm of parsed.summary.signatureAlgorithms) {
-      recordAlgorithm(signatureAlgorithm, raw, endpointReference);
+      recordAlgorithm(signatureAlgorithm, raw, endpointReference, row.assetName);
     }
 
     for (const keyExchangeAlgorithm of parsed.summary.keyExchangeAlgorithms) {
-      recordAlgorithm(keyExchangeAlgorithm, raw, endpointReference);
+      recordAlgorithm(keyExchangeAlgorithm, raw, endpointReference, row.assetName);
     }
 
     for (const encryptionAlgorithm of parsed.summary.encryptionAlgorithms) {
-      recordAlgorithm(encryptionAlgorithm, raw, endpointReference);
+      recordAlgorithm(encryptionAlgorithm, raw, endpointReference, row.assetName);
     }
 
     for (const supportedGroup of parsed.summary.supportedGroups) {
-      recordAlgorithm(supportedGroup, raw, endpointReference);
+      recordAlgorithm(supportedGroup, raw, endpointReference, row.assetName);
     }
 
     for (const probe of raw.tls_versions || []) {
       for (const breakdown of probe.cipher_breakdowns || []) {
-        recordAlgorithm(breakdown.key_exchange, raw, endpointReference);
-        recordAlgorithm(breakdown.authentication, raw, endpointReference);
-        recordAlgorithm(breakdown.encryption, raw, endpointReference);
-        recordAlgorithm(breakdown.hash, raw, endpointReference);
+        recordAlgorithm(breakdown.key_exchange, raw, endpointReference, row.assetName);
+        recordAlgorithm(breakdown.authentication, raw, endpointReference, row.assetName);
+        recordAlgorithm(breakdown.encryption, raw, endpointReference, row.assetName);
+        recordAlgorithm(breakdown.hash, raw, endpointReference, row.assetName);
       }
     }
   }
@@ -373,6 +378,7 @@ function buildAlgorithmRows(scans: CbomScanSource[]) {
       classicalSecurityLevel: aggregate.classicalSecurityLevel,
       oid: aggregate.oid,
       list: formatObservedList(aggregate.contexts),
+      assets: [...aggregate.assets].sort((left, right) => left.localeCompare(right)),
     }))
     .sort((left, right) => {
       const primitiveDelta = left.primitive.localeCompare(right.primitive);

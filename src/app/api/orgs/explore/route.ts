@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 import { hasKyberGroup } from "@/lib/pqc";
+import { calculatePqcScore, PqcAssessment } from "@/lib/pqc-scoring";
 
 const TLS_VERSION_RANK: Record<string, number> = {
   "TLSv1.3": 4,
@@ -43,6 +44,7 @@ type AssetScanSummary = {
   keySize: string | null;
   signatureAlgorithm: string | null;
   issue: string;
+  pqc: PqcAssessment | null;
 };
 
 type TlsMatchMode = "" | "exact_latest";
@@ -78,7 +80,7 @@ type ParsedScanEntry = {
   completedAtTime: number;
 };
 
-function buildSummary(parsed: ReturnType<typeof parseOpenSSLScanResult>): AssetScanSummary | null {
+function buildSummary(parsed: ReturnType<typeof parseOpenSSLScanResult>, rawData?: string | null): AssetScanSummary | null {
   const derived = parsed.summary;
   const hasTimedOut = Boolean(parsed.error && /timed out/i.test(parsed.error));
 
@@ -95,6 +97,7 @@ function buildSummary(parsed: ReturnType<typeof parseOpenSSLScanResult>): AssetS
       keySize: null,
       signatureAlgorithm: null,
       issue: "Scan Timeout",
+      pqc: null,
     };
   }
 
@@ -129,6 +132,7 @@ function buildSummary(parsed: ReturnType<typeof parseOpenSSLScanResult>): AssetS
             : isVuln
               ? "TLS Vuln"
               : "",
+    pqc: rawData ? calculatePqcScore(JSON.parse(rawData)) : null,
   };
 }
 
@@ -147,6 +151,7 @@ function scanMatchesFilters(
     selectedKexGroups: string[];
     pqcSupportedFilter: "" | "true" | "false";
     pqcNegotiatedFilter: "" | "true" | "false";
+    pqcTierVal: string;
     cipherVal: string;
     keySizeVal: string;
     tlsVal: string;
@@ -168,6 +173,7 @@ function scanMatchesFilters(
     selectedKexGroups,
     pqcSupportedFilter,
     pqcNegotiatedFilter,
+    pqcTierVal,
     cipherVal,
     keySizeVal,
     tlsVal,
@@ -208,7 +214,8 @@ function scanMatchesFilters(
       selectedKexAlgos.length > 0 ||
       selectedKexGroups.length > 0 ||
       Boolean(pqcSupportedFilter) ||
-      Boolean(pqcNegotiatedFilter);
+      Boolean(pqcNegotiatedFilter) ||
+      Boolean(pqcTierVal);
 
     return !hasScanSpecificFilters && hasTimedOut;
   }
@@ -253,6 +260,17 @@ function scanMatchesFilters(
   if (pqcSupportedFilter === "false" && hasSupportedKyber) return false;
   if (pqcNegotiatedFilter === "true" && !hasNegotiatedKyber) return false;
   if (pqcNegotiatedFilter === "false" && hasNegotiatedKyber) return false;
+
+  if (pqcTierVal) {
+    if (!entry.parsed.raw) return false;
+    try {
+      const parsedData = { ...entry.parsed.raw, resolved_ip: "127.0.0.1" };
+      const pqc = calculatePqcScore(parsedData);
+      if (pqc?.tier !== pqcTierVal) return false;
+    } catch {
+      return false;
+    }
+  }
 
   if (cipherVal) {
     const discoveredCipherSuites = new Set<string>([
@@ -371,6 +389,8 @@ export async function GET(req: NextRequest) {
         : searchParams.get("pqcNegotiated") === "false"
           ? "false"
           : "";
+    const pqcTierVal = searchParams.get("pqcTier") || "";
+    const scanStatusVal = searchParams.get("scanStatus") || "";
     const cipherVal = searchParams.get("cipher") || "";
     const keySizeVal = searchParams.get("keySize") || "";
     const tlsVal = searchParams.get("tls") || "";
@@ -395,6 +415,7 @@ export async function GET(req: NextRequest) {
       selectedKexGroups,
       pqcSupportedFilter,
       pqcNegotiatedFilter,
+      pqcTierVal,
       cipherVal,
       keySizeVal,
       tlsVal,
@@ -532,10 +553,12 @@ export async function GET(req: NextRequest) {
       Boolean(tlsVal) ||
       Boolean(endpointPortVal) ||
       Boolean(certExpiryVal) ||
+      Boolean(noTlsFilter) ||
       selectedKexAlgos.length > 0 ||
       selectedKexGroups.length > 0 ||
       Boolean(pqcSupportedFilter) ||
-      Boolean(pqcNegotiatedFilter);
+      Boolean(pqcNegotiatedFilter) ||
+      Boolean(pqcTierVal);
 
     for (const asset of assetRows) {
       if (searchVal && !asset.assetName.toLowerCase().includes(searchVal)) {
@@ -543,22 +566,39 @@ export async function GET(req: NextRequest) {
       }
 
       const assetScans = scansByAssetId.get(asset.assetId) || [];
+
+      if (scanStatusVal) {
+        if (scanStatusVal === "unscanned" && assetScans.length > 0) continue;
+        if (scanStatusVal === "scanned") {
+          const hasScanned = assetScans.some((scan) => scan.parsed.summary && !scan.parsed.summary.dnsMissing && !scan.parsed.error?.includes("timed out"));
+          if (!hasScanned) continue;
+        }
+        if (scanStatusVal === "no_dns") {
+          const hasNoDns = assetScans.some((scan) => scan.parsed.summary?.dnsMissing);
+          if (!hasNoDns) continue;
+        }
+        if (scanStatusVal === "unresponsive") {
+          const hasTimeout = assetScans.some((scan) => scan.parsed.error?.includes("timed out"));
+          if (!hasTimeout) continue;
+        }
+      }
+
       const matchingEntries = hasScanFilters
         ? assetScans.filter((entry) => scanMatchesFilters(entry, filters))
-        : assetScans.slice(0, 1);
+        : assetScans;
 
       let chosenEntry: ParsedScanEntry | null = null;
 
       if (hasScanFilters) {
         chosenEntry = matchingEntries[0] || null;
-        if (!chosenEntry) {
+        if (!chosenEntry && scanStatusVal !== "unscanned") {
           continue;
         }
       } else {
         chosenEntry = assetScans[0] || null;
       }
 
-      const summary = chosenEntry ? buildSummary(chosenEntry.parsed) : null;
+      const summary = chosenEntry ? buildSummary(chosenEntry.parsed, chosenEntry.row.resultData) : null;
       const matchingEndpointLabels = Array.from(
         new Set(matchingEntries.map((entry) => formatEndpointLabel(entry.row)))
       );
@@ -568,7 +608,7 @@ export async function GET(req: NextRequest) {
         portLabel: formatEndpointLabel(entry.row),
         portQueryValue: formatEndpointQueryValue(entry.row),
         scanCompletedAt: entry.row.completedAt ?? null,
-        summary: buildSummary(entry.parsed),
+        summary: buildSummary(entry.parsed, entry.row.resultData),
         isPreview:
           Boolean(chosenEntry) &&
           formatEndpointQueryValue(entry.row) === formatEndpointQueryValue(chosenEntry.row),
@@ -591,6 +631,18 @@ export async function GET(req: NextRequest) {
         matchingEndpoints,
       });
     }
+    filtered.sort((a, b) => {
+      const getScore = (item: typeof filtered[0]) => {
+        if (!item.summary) return 1;
+        if (item.summary.dnsMissing) return 0;
+        if (item.summary.issue === "No TLS Detected") return 1;
+        return 2;
+      };
+      const scoreA = getScore(a);
+      const scoreB = getScore(b);
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return b.addedAt.getTime() - a.addedAt.getTime();
+    });
 
     const totalMatch = filtered.length;
     const totalPages = shouldPaginate ? Math.max(1, Math.ceil(totalMatch / pageSize)) : 1;
