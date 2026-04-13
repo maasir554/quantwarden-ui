@@ -1,7 +1,8 @@
 export const dashboardSections = [
   "overview",
   "cbom",
-  "discoveries",
+  "pqc",
+  "reporting",
   "asset",
   "scan",
   "team",
