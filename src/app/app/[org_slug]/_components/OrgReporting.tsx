@@ -351,25 +351,33 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
+      title={helper}
+      aria-label={`${label}. ${helper}`}
       className={cn(
-        "min-w-[220px] flex-1 rounded-[26px] border p-4 text-left transition",
+        "group relative z-10 min-w-[220px] flex-1 rounded-[26px] border p-4 text-left transition hover:z-30 focus-visible:z-30",
         active
           ? "border-[#8B0000]/15 bg-[#8B0000] text-white shadow-sm"
           : "border-[#8a5d33]/10 bg-white/70 text-[#3d200a] hover:bg-white"
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className={cn("text-xs font-black uppercase tracking-[0.18em]", active ? "text-white/72" : "text-[#8a5d33]/70")}>
             Reporting
           </p>
-          <p className="mt-2 text-lg font-black">{label}</p>
-          <p className={cn("mt-1 text-sm font-medium", active ? "text-white/78" : "text-[#8a5d33]/75")}>{helper}</p>
+          <p className="mt-2 truncate text-lg font-black">{label}</p>
         </div>
-        <span className={cn("inline-flex h-11 w-11 items-center justify-center rounded-2xl", active ? "bg-white/16" : "bg-[#8B0000]/8")}>
+        <span className={cn("inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl", active ? "bg-white/16" : "bg-[#8B0000]/8")}>
           <Icon className={cn("h-5 w-5", active ? "text-white" : "text-[#8B0000]")} />
         </span>
       </div>
+      <span
+        className={cn(
+          "pointer-events-none absolute left-4 right-4 top-[calc(100%+0.6rem)] z-[80] rounded-2xl border border-[#5f1212] bg-[#6f1616] px-3 py-2 text-xs font-semibold leading-5 text-white opacity-0 shadow-[0_18px_40px_rgba(70,10,10,0.35)] transition group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:opacity-100"
+        )}
+      >
+        {helper}
+      </span>
     </button>
   );
 }
@@ -511,7 +519,7 @@ export default function OrgReporting({ org, canConfigure }: OrgReportingProps) {
         ) : null}
       </ShellCard>
 
-      <ShellCard className="p-3">
+      <ShellCard className="relative z-20 overflow-visible p-3">
         <div className="flex flex-wrap gap-3">
           {reportingTabs.map((tab) => (
             <TabButton

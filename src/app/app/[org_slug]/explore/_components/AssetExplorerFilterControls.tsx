@@ -19,6 +19,7 @@ import {
   Shield,
   ShieldCheck,
   SlidersHorizontal,
+  Tags,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -252,6 +253,8 @@ export default function AssetExplorerFilterControls({
   setPqcTier,
   scanStatus,
   setScanStatus,
+  bucket,
+  setBucket,
   kexAlgorithms,
   setKexAlgorithms,
   kexGroups,
@@ -264,6 +267,7 @@ export default function AssetExplorerFilterControls({
   certExpiryOptions,
   signatureAlgorithmOptions,
   cipherOptions,
+  bucketOptions,
   scanResultOptions,
   scanStatusOptions,
   tlsPresenceOptions,
@@ -394,7 +398,7 @@ export default function AssetExplorerFilterControls({
                   )}
                 >
                   {activeAdvancedFilterCount === 0
-                    ? "Optional filters for deeper TLS analysis"
+                    ? "Optional bucket, PQC, and deeper TLS filters"
                     : `${activeAdvancedFilterCount} advanced filter${activeAdvancedFilterCount === 1 ? "" : "s"} active`}
                 </span>
               </span>
@@ -407,7 +411,16 @@ export default function AssetExplorerFilterControls({
           </button>
         </div>
 
-        <div className="xl:col-span-5 flex min-w-0 items-end gap-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-3 xl:col-span-8 xl:items-end">
+          <LabeledSelect
+            label=""
+            value={bucket}
+            onChange={setBucket}
+            options={bucketOptions}
+            allLabel="All Buckets"
+            icon={Tags}
+            className="min-w-0"
+          />
           <LabeledSelect
             label=""
             value={pqcTier}
@@ -420,7 +433,7 @@ export default function AssetExplorerFilterControls({
             ]}
             allLabel="Any PQC Rating"
             icon={Cpu}
-            className="min-w-0 flex-1"
+            className="min-w-0"
           />
           <LabeledSelect
             label=""
@@ -429,7 +442,7 @@ export default function AssetExplorerFilterControls({
             options={scanStatusOptions}
             allLabel="Any Scan Status"
             icon={Activity}
-            className="min-w-0 flex-1"
+            className="min-w-0"
           />
         </div>
       </div>

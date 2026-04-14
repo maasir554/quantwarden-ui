@@ -1349,7 +1349,7 @@ export default function ReportingPdfBuilder({ org, canConfigure }: ReportingPdfB
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.95fr)]">
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_340px]">
       <section className="rounded-[28px] border border-white/40 bg-white/45 p-5 shadow-sm ring-1 ring-amber-500/10 backdrop-blur-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -1359,9 +1359,6 @@ export default function ReportingPdfBuilder({ org, canConfigure }: ReportingPdfB
               The PDF now uses live organization scan data, dashboard-style visuals, and an export-ready layout instead of placeholder content.
             </p>
           </div>
-          <span className="rounded-full bg-[#8B0000]/8 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-[#8B0000]">
-            {enabledSections.length} sections selected
-          </span>
         </div>
 
         {error ? (
@@ -1498,15 +1495,12 @@ export default function ReportingPdfBuilder({ org, canConfigure }: ReportingPdfB
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-white/40 bg-[#7a1f1f] p-5 text-white shadow-sm ring-1 ring-amber-500/10">
+      <section className="rounded-[28px] border border-white/40 bg-[#7a1f1f] p-5 text-white shadow-sm ring-1 ring-amber-500/10 xl:justify-self-end xl:w-[340px]">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-black text-white/72">PDF preview</p>
             <p className="mt-2 text-sm font-medium text-white/78">Actual pages that will be rendered into the downloaded PDF.</p>
           </div>
-          <span className="rounded-full bg-white/12 px-4 py-2 text-xs font-black text-white">
-            {pageDescriptors.length} pages
-          </span>
         </div>
 
         {loading ? (

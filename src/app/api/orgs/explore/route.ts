@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { parseOpenSSLScanResult } from "@/lib/openssl-scan";
 import { hasKyberGroup } from "@/lib/pqc";
 import { calculatePqcScore, PqcAssessment } from "@/lib/pqc-scoring";
+import { buildAssetBucketOptions, inferAssetBucket, normalizeAssetBucket } from "@/lib/asset-buckets";
 
 const TLS_VERSION_RANK: Record<string, number> = {
   "TLSv1.3": 4,
@@ -22,6 +23,7 @@ type AssetRow = {
   resolvedIp: string | null;
   openPorts: string | null;
   scanStatus: string | null;
+  bucket: string | null;
 };
 
 type AssetEndpointScanRow = {
@@ -391,6 +393,7 @@ export async function GET(req: NextRequest) {
           : "";
     const pqcTierVal = searchParams.get("pqcTier") || "";
     const scanStatusVal = searchParams.get("scanStatus") || "";
+    const bucketVal = searchParams.get("bucket") ? normalizeAssetBucket(searchParams.get("bucket")) : "";
     const cipherVal = searchParams.get("cipher") || "";
     const keySizeVal = searchParams.get("keySize") || "";
     const tlsVal = searchParams.get("tls") || "";
@@ -432,7 +435,8 @@ export async function GET(req: NextRequest) {
           a."createdAt" as "addedAt",
           a."resolvedIp" as "resolvedIp",
           a."openPorts" as "openPorts",
-          a."scanStatus" as "scanStatus"
+          a."scanStatus" as "scanStatus",
+          a."bucket" as "bucket"
        FROM "asset" a
        WHERE a."organizationId" = $1
        ORDER BY a."createdAt" DESC`,
@@ -525,6 +529,7 @@ export async function GET(req: NextRequest) {
       resolvedIp: string | null;
       openPorts: string | null;
       scanStatus: string | null;
+      bucket: string;
       scanCompletedAt: Date | null;
       summary: AssetScanSummary | null;
       selectedEndpointLabel: string | null;
@@ -562,6 +567,11 @@ export async function GET(req: NextRequest) {
 
     for (const asset of assetRows) {
       if (searchVal && !asset.assetName.toLowerCase().includes(searchVal)) {
+        continue;
+      }
+
+      const normalizedBucket = normalizeAssetBucket(asset.bucket || inferAssetBucket(asset.assetName));
+      if (bucketVal && normalizedBucket !== bucketVal) {
         continue;
       }
 
@@ -623,6 +633,7 @@ export async function GET(req: NextRequest) {
         resolvedIp: asset.resolvedIp ?? null,
         openPorts: asset.openPorts ?? null,
         scanStatus: asset.scanStatus ?? null,
+        bucket: normalizedBucket,
         scanCompletedAt: chosenEntry?.row.completedAt ?? null,
         summary,
         selectedEndpointLabel: chosenEntry ? formatEndpointLabel(chosenEntry.row) : null,
@@ -671,6 +682,12 @@ export async function GET(req: NextRequest) {
         kexAlgorithms: [...kexAlgorithmOptions].sort(),
         kexGroups: [...negotiatedGroupOptions].sort(),
         signatureAlgorithms: [...signatureAlgorithmOptions].sort(),
+        buckets: buildAssetBucketOptions(
+          assetRows.map((asset) => ({
+            bucket: asset.bucket,
+            value: asset.assetName,
+          }))
+        ),
       },
     });
   } catch (error) {

@@ -55,6 +55,7 @@ export default function AssetExplorerClientImpl({
   initialPqcNegotiated,
   initialPqcTier,
   initialScanStatus,
+  initialBucket,
   initialKexAlgorithms,
   initialKexGroups,
   initialPage,
@@ -83,6 +84,7 @@ export default function AssetExplorerClientImpl({
   const [pqcNegotiatedOnly, setPqcNegotiatedOnly] = useState<BooleanFilter>(normalizeBooleanFilter(initialPqcNegotiated));
   const [pqcTier, setPqcTier] = useState(initialPqcTier || "");
   const [scanStatus, setScanStatus] = useState(initialScanStatus || "");
+  const [bucket, setBucket] = useState(initialBucket || "");
   const [kexAlgorithms, setKexAlgorithms] = useState<string[]>(initialKexAlgorithms || []);
   const [kexGroups, setKexGroups] = useState<string[]>(initialKexGroups || []);
   const [search, setSearch] = useState("");
@@ -104,6 +106,7 @@ export default function AssetExplorerClientImpl({
       pqcNegotiatedOnly: normalizeBooleanFilter(initialPqcNegotiated),
       pqcTier: initialPqcTier || "",
       scanStatus: initialScanStatus || "",
+      bucket: initialBucket || "",
       kexAlgorithms: initialKexAlgorithms || [],
       kexGroups: initialKexGroups || [],
     }) > 0
@@ -116,6 +119,7 @@ export default function AssetExplorerClientImpl({
     kexAlgorithms: [],
     kexGroups: [],
     signatureAlgorithms: [],
+    buckets: [],
   });
   const deferredSearch = useDeferredValue(search);
   const normalizedSearch = useMemo(() => deferredSearch.trim().toLowerCase(), [deferredSearch]);
@@ -139,6 +143,7 @@ export default function AssetExplorerClientImpl({
         pqcNegotiatedOnly,
         pqcTier,
         scanStatus,
+        bucket,
         kexAlgorithms,
         kexGroups,
       }),
@@ -158,6 +163,7 @@ export default function AssetExplorerClientImpl({
       scanStatus,
       selfSigned,
       signatureAlgorithm,
+      bucket,
       tlsMatch,
       tlsProfile,
       timeoutOnly,
@@ -275,6 +281,7 @@ export default function AssetExplorerClientImpl({
       pqcNegotiatedOnly,
       pqcTier,
       scanStatus,
+      bucket,
       kexAlgorithms,
       kexGroups,
       page,
@@ -311,6 +318,7 @@ export default function AssetExplorerClientImpl({
     pqcTier,
     selfSigned,
     signatureAlgorithm,
+    bucket,
     tlsMatch,
     tlsProfile,
     page,
@@ -348,6 +356,7 @@ export default function AssetExplorerClientImpl({
         if (pqcNegotiatedOnly) query.append("pqcNegotiated", pqcNegotiatedOnly);
         if (pqcTier) query.append("pqcTier", pqcTier);
         if (scanStatus) query.append("scanStatus", scanStatus);
+        if (bucket) query.append("bucket", bucket);
         if (kexAlgorithms.length > 0) query.append("kexAlgos", kexAlgorithms.join(","));
         if (kexGroups.length > 0) query.append("kexGroups", kexGroups.join(","));
         query.append("paginate", "false");
@@ -392,6 +401,7 @@ export default function AssetExplorerClientImpl({
     scanStatus,
     selfSigned,
     signatureAlgorithm,
+    bucket,
     tlsMatch,
     tlsProfile,
     timeoutOnly,
@@ -416,6 +426,7 @@ export default function AssetExplorerClientImpl({
     pqcNegotiatedOnly,
     pqcTier,
     scanStatus,
+    bucket,
     kexAlgorithms,
     kexGroups,
   });
@@ -428,6 +439,7 @@ export default function AssetExplorerClientImpl({
     pqcNegotiatedOnly,
     pqcTier,
     scanStatus,
+    bucket,
     kexAlgorithms,
     kexGroups,
   });
@@ -496,6 +508,11 @@ export default function AssetExplorerClientImpl({
     label: option,
   }));
 
+  const bucketOptions = filterOptions.buckets.map((option) => ({
+    value: option,
+    label: option,
+  }));
+
   const toggleSelection = (value: string, selected: string[], setter: (values: string[]) => void) => {
     if (selected.includes(value)) {
       setter(selected.filter((item) => item !== value));
@@ -549,6 +566,7 @@ export default function AssetExplorerClientImpl({
     setPqcNegotiatedOnly("");
     setPqcTier("");
     setScanStatus("");
+    setBucket("");
     setKexAlgorithms([]);
     setKexGroups([]);
     setPage(1);
@@ -766,6 +784,8 @@ export default function AssetExplorerClientImpl({
                     setPqcTier={setPqcTier}
                     scanStatus={scanStatus}
                     setScanStatus={setScanStatus}
+                    bucket={bucket}
+                    setBucket={setBucket}
                     kexAlgorithms={kexAlgorithms}
                     setKexAlgorithms={setKexAlgorithms}
                     kexGroups={kexGroups}
@@ -778,6 +798,7 @@ export default function AssetExplorerClientImpl({
                     certExpiryOptions={certExpiryOptions}
                     signatureAlgorithmOptions={signatureAlgorithmOptions}
                     cipherOptions={cipherOptions}
+                    bucketOptions={bucketOptions}
                     scanResultOptions={scanResultOptions}
                     scanStatusOptions={scanStatusOptions}
                     tlsPresenceOptions={tlsPresenceOptions}
@@ -882,6 +903,8 @@ export default function AssetExplorerClientImpl({
               setPqcTier={setPqcTier}
               scanStatus={scanStatus}
               setScanStatus={setScanStatus}
+              bucket={bucket}
+              setBucket={setBucket}
               kexAlgorithms={kexAlgorithms}
               setKexAlgorithms={setKexAlgorithms}
               kexGroups={kexGroups}
@@ -894,6 +917,7 @@ export default function AssetExplorerClientImpl({
               certExpiryOptions={certExpiryOptions}
               signatureAlgorithmOptions={signatureAlgorithmOptions}
               cipherOptions={cipherOptions}
+              bucketOptions={bucketOptions}
               scanResultOptions={scanResultOptions}
               scanStatusOptions={scanStatusOptions}
               tlsPresenceOptions={tlsPresenceOptions}

@@ -23,6 +23,7 @@ export type AssetExplorerClientProps = {
   initialPqcNegotiated: string;
   initialPqcTier?: string;
   initialScanStatus?: string;
+  initialBucket?: string;
   initialKexAlgorithms: string[];
   initialKexGroups: string[];
   initialPage: number;
@@ -37,6 +38,7 @@ export type FilterOptions = {
   kexAlgorithms: string[];
   kexGroups: string[];
   signatureAlgorithms: string[];
+  buckets: string[];
 };
 
 export type SelectOption = {
@@ -80,6 +82,8 @@ export type FilterControlsProps = {
   setPqcTier: (value: string) => void;
   scanStatus: string;
   setScanStatus: (value: string) => void;
+  bucket: string;
+  setBucket: (value: string) => void;
   kexAlgorithms: string[];
   setKexAlgorithms: (value: string[]) => void;
   kexGroups: string[];
@@ -92,6 +96,7 @@ export type FilterControlsProps = {
   certExpiryOptions: SelectOption[];
   signatureAlgorithmOptions: SelectOption[];
   cipherOptions: SelectOption[];
+  bucketOptions: SelectOption[];
   scanResultOptions: SelectOption[];
   scanStatusOptions: SelectOption[];
   tlsPresenceOptions: SelectOption[];
@@ -103,4 +108,3 @@ export type FilterControlsProps = {
   toggleSelection: (value: string, selected: string[], setter: (values: string[]) => void) => void;
   variant?: "inline" | "modal";
 };
-

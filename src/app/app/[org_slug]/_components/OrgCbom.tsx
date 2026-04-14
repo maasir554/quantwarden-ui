@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
-  FileJson,
+  Download,
   Fingerprint,
   KeyRound,
   Loader2,
@@ -17,6 +17,11 @@ import { CBOM_NOT_REPORTED, type CbomResponse } from "@/lib/cbom";
 import { cn } from "@/lib/utils";
 
 type CbomTabKey = "algorithms" | "keys" | "protocols" | "certificates";
+type ExportFormat = "json" | "csv";
+type CsvColumn<T> = {
+  header: string;
+  accessor: (row: T) => string | number | boolean | null | undefined;
+};
 
 type OrgCbomProps = {
   org: { id: string };
@@ -32,6 +37,35 @@ function downloadJson(filename: string, payload: unknown) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadText(filename: string, payload: string, mimeType: string) {
+  const blob = new Blob([payload], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsvCell(value: string | number | boolean | null | undefined) {
+  const normalized = value == null ? "" : String(value);
+  if (/[",\n]/.test(normalized)) {
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+  return normalized;
+}
+
+function buildCsv<T>(rows: T[], columns: CsvColumn<T>[]) {
+  const headerLine = columns.map((column) => escapeCsvCell(column.header)).join(",");
+  const dataLines = rows.map((row) =>
+    columns.map((column) => escapeCsvCell(column.accessor(row))).join(",")
+  );
+
+  return [headerLine, ...dataLines].join("\n");
 }
 
 function EmptyState({ label }: { label: string }) {
@@ -165,16 +199,18 @@ function DataPanel({
   subtitle,
   icon: Icon,
   count,
-  filename,
-  payload,
+  exportFormat,
+  onExportFormatChange,
+  onExport,
   children,
 }: {
   title: string;
   subtitle: string;
   icon: LucideIcon;
   count: number;
-  filename: string;
-  payload: unknown;
+  exportFormat: ExportFormat;
+  onExportFormatChange: (value: ExportFormat) => void;
+  onExport: () => void;
   children: ReactNode;
 }) {
   return (
@@ -195,14 +231,26 @@ function DataPanel({
           <span className="rounded-full border border-[#8B0000]/15 bg-white/75 px-3 py-1 text-xs font-bold text-[#8B0000]">
             {count} rows
           </span>
-          <button
-            type="button"
-            onClick={() => downloadJson(filename, payload)}
-            className="inline-flex items-center gap-2 rounded-full bg-[#8B0000] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#6f0000]"
-          >
-            <FileJson className="h-4 w-4" />
-            Export JSON
-          </button>
+          <div className="flex items-center gap-2 rounded-full border border-[#8B0000]/15 bg-white/80 px-2 py-2">
+            <span className="pl-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8a5d33]/80">Export:</span>
+            <select
+              value={exportFormat}
+              onChange={(event) => onExportFormatChange(event.target.value as ExportFormat)}
+              className="rounded-full border border-[#8a5d33]/10 bg-[#fffdf8] px-3 py-1.5 text-sm font-bold text-[#3d200a] outline-none transition focus:border-[#8B0000]/30 focus:ring-2 focus:ring-[#8B0000]/10"
+            >
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+            </select>
+            <button
+              type="button"
+              onClick={onExport}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#8B0000] text-white transition hover:bg-[#6f0000]"
+              aria-label={`Download ${exportFormat.toUpperCase()} export`}
+              title={`Download ${exportFormat.toUpperCase()}`}
+            >
+              <Download className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
       {children}
@@ -214,6 +262,7 @@ export default function OrgCbom({ org }: OrgCbomProps) {
   const [data, setData] = useState<CbomResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<CbomTabKey>("algorithms");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
 
   useEffect(() => {
     let mounted = true;
@@ -255,8 +304,20 @@ export default function OrgCbom({ org }: OrgCbomProps) {
         count: data.algorithms.length,
         title: "Algorithms",
         subtitle: "Element-wise cryptographic algorithms observed across the latest completed endpoint scans.",
-        filename: "certin-cbom-algorithms.json",
+        jsonFilename: "certin-cbom-algorithms.json",
+        csvFilename: "certin-cbom-algorithms.csv",
         payload: data.algorithms,
+        csvContent: buildCsv(data.algorithms, [
+          { header: "Cryptographic Asset Type", accessor: (row) => row.cryptographicAssetType },
+          { header: "Name", accessor: (row) => row.name },
+          { header: "Asset Type", accessor: (row) => row.assetType },
+          { header: "Primitive", accessor: (row) => row.primitive },
+          { header: "Mode", accessor: (row) => row.mode },
+          { header: "Crypto Functions", accessor: (row) => row.cryptoFunctions },
+          { header: "Classical Security Level", accessor: (row) => row.classicalSecurityLevel },
+          { header: "OID", accessor: (row) => row.oid },
+          { header: "Assets", accessor: (row) => row.assets.join("\n") },
+        ]),
         emptyLabel: "No algorithm inventory could be derived from the currently stored OpenSSL scan payloads.",
         minWidthClass: "min-w-[1100px]",
         table: (
@@ -299,8 +360,19 @@ export default function OrgCbom({ org }: OrgCbomProps) {
         count: data.keys.length,
         title: "Keys",
         subtitle: "Best-effort certificate public key inventory. Lifecycle fields remain explicit when the stored payload does not expose them.",
-        filename: "certin-cbom-keys.json",
+        jsonFilename: "certin-cbom-keys.json",
+        csvFilename: "certin-cbom-keys.csv",
         payload: data.keys,
+        csvContent: buildCsv(data.keys, [
+          { header: "Cryptographic Asset Type", accessor: (row) => row.cryptographicAssetType },
+          { header: "Name", accessor: (row) => row.name },
+          { header: "Asset Type", accessor: (row) => row.assetType },
+          { header: "ID", accessor: (row) => row.id },
+          { header: "State", accessor: (row) => row.state },
+          { header: "Size", accessor: (row) => row.size },
+          { header: "Creation Date", accessor: (row) => row.creationDate },
+          { header: "Activation Date", accessor: (row) => row.activationDate },
+        ]),
         emptyLabel: "No certificate public keys were available in the latest completed OpenSSL endpoint scans.",
         minWidthClass: "min-w-[980px]",
         table: (
@@ -351,8 +423,17 @@ export default function OrgCbom({ org }: OrgCbomProps) {
         count: data.protocols.length,
         title: "Protocols",
         subtitle: "Version-specific TLS protocol inventory for each latest scanned endpoint.",
-        filename: "certin-cbom-protocols.json",
+        jsonFilename: "certin-cbom-protocols.json",
+        csvFilename: "certin-cbom-protocols.csv",
         payload: data.protocols,
+        csvContent: buildCsv(data.protocols, [
+          { header: "Cryptographic Asset Type", accessor: (row) => row.cryptographicAssetType },
+          { header: "Name", accessor: (row) => row.name },
+          { header: "Asset Type", accessor: (row) => row.assetType },
+          { header: "Version", accessor: (row) => row.version },
+          { header: "Cipher Suites", accessor: (row) => row.cipherSuites },
+          { header: "OID", accessor: (row) => row.oid },
+        ]),
         emptyLabel: "No supported TLS protocol versions were available in the latest completed OpenSSL endpoint scans.",
         minWidthClass: "min-w-[1000px]",
         table: (
@@ -389,8 +470,26 @@ export default function OrgCbom({ org }: OrgCbomProps) {
         count: data.certificates.length,
         title: "Certificates",
         subtitle: "Observed endpoint certificates from the latest completed OpenSSL scan stored for each asset endpoint.",
-        filename: "certin-cbom-certificates.json",
+        jsonFilename: "certin-cbom-certificates.json",
+        csvFilename: "certin-cbom-certificates.csv",
         payload: data.certificates,
+        csvContent: buildCsv(data.certificates, [
+          { header: "Cryptographic Asset Type", accessor: (row) => row.cryptographicAssetType },
+          { header: "Name", accessor: (row) => row.name },
+          { header: "Asset Type", accessor: (row) => row.assetType },
+          { header: "Subject C", accessor: (row) => row.subjectC },
+          { header: "Subject CN", accessor: (row) => row.subjectCN },
+          { header: "Subject O", accessor: (row) => row.subjectO },
+          { header: "Issuer C", accessor: (row) => row.issuerC },
+          { header: "Issuer CN", accessor: (row) => row.issuerCN },
+          { header: "Issuer O", accessor: (row) => row.issuerO },
+          { header: "Not Valid Before", accessor: (row) => row.notValidBefore },
+          { header: "Not Valid After", accessor: (row) => row.notValidAfter },
+          { header: "Signature Algorithm Reference", accessor: (row) => row.signatureAlgorithmReference },
+          { header: "Subject Public Key Reference", accessor: (row) => row.subjectPublicKeyReference },
+          { header: "Certificate Format", accessor: (row) => row.certificateFormat },
+          { header: "Certificate Extension", accessor: (row) => row.certificateExtension },
+        ]),
         emptyLabel: "No endpoint certificate records were available in the latest completed OpenSSL scan payloads.",
         minWidthClass: "min-w-[1520px]",
         table: (
@@ -461,6 +560,14 @@ export default function OrgCbom({ org }: OrgCbomProps) {
   if (!data || tabs.length === 0) return null;
 
   const activeConfig = tabs.find((tab) => tab.key === activeTab) || tabs[0];
+  const handleExport = () => {
+    if (exportFormat === "csv") {
+      downloadText(activeConfig.csvFilename, activeConfig.csvContent, "text/csv;charset=utf-8");
+      return;
+    }
+
+    downloadJson(activeConfig.jsonFilename, activeConfig.payload);
+  };
 
   return (
     <div className="flex flex-col space-y-5 pb-10 animate-in fade-in duration-300">
@@ -561,8 +668,9 @@ export default function OrgCbom({ org }: OrgCbomProps) {
         subtitle={activeConfig.subtitle}
         icon={activeConfig.icon}
         count={activeConfig.count}
-        filename={activeConfig.filename}
-        payload={activeConfig.payload}
+        exportFormat={exportFormat}
+        onExportFormatChange={setExportFormat}
+        onExport={handleExport}
       >
         {activeConfig.count === 0 ? (
           <EmptyState label={activeConfig.emptyLabel} />

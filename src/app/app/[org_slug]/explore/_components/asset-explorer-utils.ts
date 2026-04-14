@@ -22,6 +22,7 @@ export const FILTER_QUERY_KEYS = [
   "pqcNegotiated",
   "pqcTier",
   "scanStatus",
+  "bucket",
   "kexAlgos",
   "kexGroups",
   "page",
@@ -58,6 +59,7 @@ export function buildFilterQueryParams({
   pqcNegotiatedOnly,
   pqcTier,
   scanStatus,
+  bucket,
   kexAlgorithms,
   kexGroups,
   page,
@@ -80,6 +82,7 @@ export function buildFilterQueryParams({
   pqcNegotiatedOnly: BooleanFilter;
   pqcTier: string;
   scanStatus: string;
+  bucket: string;
   kexAlgorithms: string[];
   kexGroups: string[];
   page: number;
@@ -103,6 +106,7 @@ export function buildFilterQueryParams({
   if (pqcNegotiatedOnly) params.set("pqcNegotiated", pqcNegotiatedOnly);
   if (pqcTier) params.set("pqcTier", pqcTier);
   if (scanStatus) params.set("scanStatus", scanStatus);
+  if (bucket) params.set("bucket", bucket);
   if (kexAlgorithms.length > 0) params.set("kexAlgos", kexAlgorithms.join(","));
   if (kexGroups.length > 0) params.set("kexGroups", kexGroups.join(","));
   if (page > 1) params.set("page", String(page));
@@ -129,6 +133,7 @@ export function countActiveFilters({
   pqcNegotiatedOnly,
   pqcTier,
   scanStatus,
+  bucket,
   kexAlgorithms,
   kexGroups,
 }: {
@@ -151,6 +156,7 @@ export function countActiveFilters({
   kexGroups: string[];
   pqcTier: string;
   scanStatus: string;
+  bucket: string;
 }) {
   return [
     dnsState,
@@ -170,6 +176,7 @@ export function countActiveFilters({
     pqcNegotiatedOnly,
     pqcTier,
     scanStatus,
+    bucket,
     ...kexAlgorithms,
     ...kexGroups,
   ].filter(Boolean).length;
@@ -182,6 +189,7 @@ export function countAdvancedFilters({
   pqcNegotiatedOnly,
   pqcTier,
   scanStatus,
+  bucket,
   kexAlgorithms,
   kexGroups,
 }: {
@@ -191,6 +199,7 @@ export function countAdvancedFilters({
   pqcNegotiatedOnly: BooleanFilter;
   pqcTier: string;
   scanStatus: string;
+  bucket: string;
   kexAlgorithms: string[];
   kexGroups: string[];
 }) {
@@ -201,6 +210,7 @@ export function countAdvancedFilters({
     pqcNegotiatedOnly,
     pqcTier,
     scanStatus,
+    bucket,
     ...kexAlgorithms,
     ...kexGroups,
   ].filter(Boolean).length;
@@ -228,6 +238,7 @@ export function assetMatchesClientSearch(asset: any, normalizedSearch: string) {
     asset.type,
     asset.resolvedIp,
     asset.scanStatus,
+    asset.bucket,
     asset.selectedEndpointLabel,
     asset.summary?.issue,
     asset.summary?.tls,
