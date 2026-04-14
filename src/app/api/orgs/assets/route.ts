@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getOrgMemberAccess } from "@/lib/org-scan-permissions";
+import { inferAssetBucket, normalizeAssetBucket } from "@/lib/asset-buckets";
 import { normalizeAssetOpenPorts } from "@/lib/port-discovery";
 import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
@@ -33,17 +34,29 @@ export async function GET(req: NextRequest) {
     let assets: any[] = [];
     try {
       assets = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, value, type, "isRoot", "parentId", "resolvedIp", "openPorts", "createdAt", "scanStatus", "lastScanDate", "portDiscoveryStatus", "lastPortDiscoveryDate" FROM "asset" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
+        `SELECT id, value, type, "isRoot", "parentId", "resolvedIp", "openPorts", bucket, "createdAt", "scanStatus", "lastScanDate", "portDiscoveryStatus", "lastPortDiscoveryDate" FROM "asset" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
         orgId
       );
     } catch(err) {
-      assets = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, value, type, "isRoot", "parentId", "createdAt" FROM "asset" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
-        orgId
-      );
+      try {
+        assets = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT id, value, type, "isRoot", "parentId", "resolvedIp", "openPorts", "createdAt", "scanStatus", "lastScanDate", "portDiscoveryStatus", "lastPortDiscoveryDate" FROM "asset" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
+          orgId
+        );
+      } catch {
+        assets = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT id, value, type, "isRoot", "parentId", "createdAt" FROM "asset" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
+          orgId
+        );
+      }
     }
 
-    return NextResponse.json({ assets });
+    const assetsWithBuckets = assets.map((asset) => ({
+      ...asset,
+      bucket: normalizeAssetBucket(asset.bucket || inferAssetBucket(asset.value)),
+    }));
+
+    return NextResponse.json({ assets: assetsWithBuckets });
   } catch (error) {
     console.error("Asset fetch error:", error);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });

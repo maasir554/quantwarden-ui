@@ -33,6 +33,13 @@ import {
 } from "lucide-react";
 import { useScanActivity } from "@/components/scan-activity-provider";
 import {
+  buildAssetBucketOptions,
+  DEFAULT_ASSET_BUCKET,
+  inferAssetBucket,
+  normalizeAssetBucket,
+  PREDEFINED_ASSET_BUCKETS,
+} from "@/lib/asset-buckets";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -316,7 +323,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
   const [rootAssets, setRootAssets] = useState<{
     id: string; value: string; type: "domain" | "ip" | "unknown";
     addedAt: string; scanning: boolean; statusMessage?: string; scanStatus?: string; portDiscoveryStatus?: string; resolvedIp?: string | null; openPorts: AssetPort[];
-    subdomains: string[];
+    subdomains: string[]; bucket: string;
   }[]>(() => {
     return orgAssets.filter(a => a.isRoot).map(a => ({
       id: a.id,
@@ -332,13 +339,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       openPorts: parseOpenPorts(a.openPorts),
       statusMessage: "",
       subdomains: orgAssets.filter(leaf => leaf.parentId === a.id).map(l => l.value),
+      bucket: normalizeAssetBucket(a.bucket || inferAssetBucket(a.value)),
     }));
   });
 
   // === Leaf assets ===
   const [leafAssets, setLeafAssets] = useState<{
     id: string; value: string; type: "domain" | "ip" | "unknown";
-    parentId: string | null; addedAt: string; scanStatus?: string; portDiscoveryStatus?: string; resolvedIp?: string | null; openPorts: AssetPort[];
+    parentId: string | null; addedAt: string; scanStatus?: string; portDiscoveryStatus?: string; resolvedIp?: string | null; openPorts: AssetPort[]; bucket: string;
   }[]>(() => {
     return orgAssets.filter(a => !a.isRoot).map(a => ({
       id: a.id,
@@ -350,6 +358,7 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
       portDiscoveryStatus: a.portDiscoveryStatus,
       resolvedIp: a.resolvedIp ?? null,
       openPorts: parseOpenPorts(a.openPorts),
+      bucket: normalizeAssetBucket(a.bucket || inferAssetBucket(a.value)),
     }));
   });
 
