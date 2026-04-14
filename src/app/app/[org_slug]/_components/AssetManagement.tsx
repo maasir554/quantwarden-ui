@@ -1754,9 +1754,14 @@ export default function AssetManagement({ org, currentUserRole, currentUserId, c
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Buckets</SelectItem>
-                  {visibleBucketOptions.map((bucket) => (
+                  {PREDEFINED_ASSET_BUCKETS.map((bucket) => (
                     <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
                   ))}
+                  {visibleBucketOptions
+                    .filter((bucket) => !PREDEFINED_ASSET_BUCKETS.includes(bucket as any))
+                    .map((bucket) => (
+                      <SelectItem key={bucket} value={bucket}>{bucket}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
               <button
